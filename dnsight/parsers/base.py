@@ -2,30 +2,30 @@
 import requests
 import time
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from bs4 import BeautifulSoup
 from ..core.config import REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY, USER_AGENTS
-from ..core.utils import random_ua
 
 logger = logging.getLogger(__name__)
 
+def random_ua() -> str:
+    import random
+    return random.choice(USER_AGENTS) if USER_AGENTS else "Mozilla/5.0"
+
 class BaseParser(ABC):
-    def __init__(self, use_proxy=False):
+    def __init__(self, use_proxy: bool = False):
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': random_ua()})
         if use_proxy:
-            # настройка прокси из переменных окружения
             pass
         self.timeout = REQUEST_TIMEOUT
 
-    def _get_soup(self, url: str, retries=MAX_RETRIES) -> BeautifulSoup:
+    def _get_soup(self, url: str, retries: int = MAX_RETRIES) -> BeautifulSoup:
         for attempt in range(retries):
             try:
-                # обновляем User-Agent при каждой попытке
                 self.session.headers.update({'User-Agent': random_ua()})
                 resp = self.session.get(url, timeout=self.timeout)
                 resp.raise_for_status()
-                # Проверяем, не капча ли (можно по keywords в тексте)
                 if "captcha" in resp.text.lower():
                     raise Exception("Captcha detected")
                 return BeautifulSoup(resp.text, 'lxml')
@@ -34,3 +34,4 @@ class BaseParser(ABC):
                 if attempt == retries - 1:
                     raise
                 time.sleep(RETRY_DELAY * (attempt + 1))
+        raise RuntimeError("Unreachable")  # для статического анализатора
