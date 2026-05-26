@@ -65,7 +65,6 @@ class PriceHistory(Base):
     component_id = Column(Integer, ForeignKey("components.id"), nullable=False)
     price = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    
     component = relationship("Component", back_populates="price_history")
 
 class ScoreHistory(Base):
@@ -75,7 +74,6 @@ class ScoreHistory(Base):
     score = Column(Float, nullable=False)
     source = Column(String(50), default="passmark")
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    
     component = relationship("Component", back_populates="score_history")
 
 class BenefitHistory(Base):
@@ -84,5 +82,4 @@ class BenefitHistory(Base):
     component_id = Column(Integer, ForeignKey("components.id"), nullable=False)
     benefit = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    
     component = relationship("Component", back_populates="benefit_history")

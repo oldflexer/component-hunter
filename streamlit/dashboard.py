@@ -10,6 +10,7 @@ from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_component_and_attributes
 from dnsight.core.config import DNS_CATEGORIES
 from dnsight.core.models import Component, Attribute, AttributeValue, PriceHistory, ScoreHistory, BenefitHistory, ComponentType
+from dnsight.core.logging import get_logger
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
 st.title("📊 DNSight - Аналитика комплектующих")
@@ -34,12 +35,13 @@ CATEGORY_TO_TYPE = {
 }
 
 def run_parsing():
-    # Если хотите использовать ваш локальный chromedriver:
-    parser = DNSParser()
-    # или для автоматической загрузки: parser = DNSParser()
+    # Создаём логгер дашборда заново при каждом запуске (перезапись)
+    dashboard_logger = get_logger("dashboard", "logs/dashboard.log", mode='w')
+    parser = DNSParser()  # внутри перезаписывает parser.log
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
             st.info(f"Парсинг {cat_key}...")
+            dashboard_logger.info(f"Запуск парсинга категории {cat_key}")
             products = parser.parse_category(cat_key, max_pages=1, max_items=3)
             st.write(f"Найдено {len(products)} товаров")
             for prod in products:
@@ -53,9 +55,13 @@ def run_parsing():
                     specs=specs
                 )
                 time.sleep(0.5)
+    except Exception as e:
+        dashboard_logger.exception("Ошибка в процессе парсинга")
+        st.error(f"Ошибка: {e}")
     finally:
         parser.close()
     st.success("Парсинг завершён!")
+    dashboard_logger.info("Парсинг завершён")
 
 with st.sidebar:
     st.header("Управление")

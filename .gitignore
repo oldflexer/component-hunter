@@ -2,3 +2,4 @@
 chromedriver/*
 *pycache*
 dnsight.db
+*.log

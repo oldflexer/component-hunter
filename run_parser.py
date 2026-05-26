@@ -1,9 +1,16 @@
 import time
-
+import logging
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_component_and_attributes
 from dnsight.core.config import DNS_CATEGORIES
+import os
+from dnsight.core.logging import setup_logging
+
+os.makedirs("logs", exist_ok=True)
+setup_logging(level=logging.INFO, log_file="logs/parser.log", mode='w')
+
+logger = logging.getLogger(__name__)
 
 CATEGORY_TO_TYPE = {
     "cpu": "CPU",
@@ -23,12 +30,12 @@ CATEGORY_TO_TYPE = {
 
 def parse_and_save_category(parser, db, category_key: str, max_pages: int = 1, max_items: int = 3):
     type_name = CATEGORY_TO_TYPE[category_key]
-    print(f"Парсинг категории {category_key} -> {type_name}")
+    logger.info(f"Парсинг категории {category_key} -> {type_name}")
     products = parser.parse_category(category_key, max_pages=max_pages, max_items=max_items)
-    print(f"Найдено товаров: {len(products)}")
+    logger.info(f"Найдено товаров: {len(products)}")
     
     for idx, prod in enumerate(products, 1):
-        print(f"  [{idx}/{len(products)}] Обработка: {prod['name']}")
+        logger.info(f"[{idx}/{len(products)}] Обработка: {prod['name']}")
         specs = parser.parse_product_details(prod['url'])
         save_component_and_attributes(
             db=db,
@@ -39,17 +46,21 @@ def parse_and_save_category(parser, db, category_key: str, max_pages: int = 1, m
             specs=specs
         )
         time.sleep(0.5)
-    print(f"Категория {category_key} завершена.\n")
+    logger.info(f"Категория {category_key} завершена.\n")
 
 def main():
+    logger.info("Запуск парсера DNSight")
     init_db()
     db = get_db()
     parser = DNSParser()
     try:
         for cat_key in CATEGORY_TO_TYPE:
             parse_and_save_category(parser, db, cat_key, max_pages=1, max_items=3)
+    except Exception as e:
+        logger.exception("Критическая ошибка в основном цикле")
     finally:
         parser.close()
+    logger.info("Парсинг завершён")
 
 if __name__ == "__main__":
     main()
