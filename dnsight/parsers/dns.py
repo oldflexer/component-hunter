@@ -1,38 +1,28 @@
 import time
 import re
 from typing import List, Dict, Optional
-from bs4 import BeautifulSoup
+
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+
 from ..core.config import DNS_CATEGORIES, REQUEST_TIMEOUT
 
 class DNSParser:
-    def __init__(self, chromedriver_path: Optional[str] = None):
-        """
-        :param chromedriver_path: путь к chromedriver.exe (например, "chromedriver/chromedriver.exe")
-        """
+    def __init__(self):
         self.base_url = "https://www.dns-shop.ru"
         self.driver = None
-        self.chromedriver_path = chromedriver_path
 
     def _get_driver(self):
-        """Ленивая инициализация драйвера с указанием пути к chromedriver"""
         if self.driver is None:
             options = uc.ChromeOptions()
-            # options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            # Если передан путь к chromedriver, используем его
-            if self.chromedriver_path:
-                # Для undetected-chromedriver путь указывается через `executable_path`
-                self.driver = uc.Chrome(
-                    options=options,
-                    executable_path=self.chromedriver_path
-                )
-            else:
-                self.driver = uc.Chrome(options=options)
+            self.driver = uc.Chrome(
+                version_main=148,
+                options=options
+            )
+            self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
         return self.driver
 
     def _wait_for_element(self, driver, selector: str, timeout: int = REQUEST_TIMEOUT):
@@ -50,11 +40,19 @@ class DNSParser:
 
         while True:
             print(f"Страница {page_num} для {category_key}")
-            driver.get(url)
+            for attempt in range(3):
+                try:
+                    driver.get(url)
+                    break
+                except Exception as e:
+                    print(f"Ошибка загрузки {url}: {e}, попытка {attempt+1}/3")
+                    time.sleep(5)
+                    if attempt == 2:
+                        return products
             try:
                 self._wait_for_element(driver, 'div.catalog-product', timeout=REQUEST_TIMEOUT)
             except Exception:
-                print("Не удалось загрузить товары на странице, возможно, конец списка")
+                print("Товары не найдены")
                 break
 
             time.sleep(2)
@@ -95,7 +93,6 @@ class DNSParser:
             if max_items and len(products) >= max_items:
                 break
 
-            # Пагинация
             try:
                 next_link = driver.find_element(By.CSS_SELECTOR, f'a.pagination-widget__page[data-page-number="{page_num + 1}"]')
                 url = next_link.get_attribute('href')
@@ -111,7 +108,6 @@ class DNSParser:
 
     def parse_product_details(self, product_url: str) -> Dict[str, str]:
         driver = self._get_driver()
-        # Формируем URL страницы характеристик
         if '/product/' in product_url:
             parts = product_url.split('/product/')
             if len(parts) == 2:
@@ -121,7 +117,15 @@ class DNSParser:
         else:
             characteristics_url = product_url.rstrip('/') + '/characteristics/'
 
-        driver.get(characteristics_url)
+        for attempt in range(3):
+            try:
+                driver.get(characteristics_url)
+                break
+            except Exception as e:
+                print(f"Ошибка загрузки {characteristics_url}: {e}, попытка {attempt+1}/3")
+                time.sleep(5)
+                if attempt == 2:
+                    return {}
 
         try:
             expand_button = WebDriverWait(driver, 10).until(

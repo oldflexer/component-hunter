@@ -1,6 +1,5 @@
 # environment
 python-dotenv==1.2.2
-mypy==2.1.0
 
 # database
 sqlalchemy==2.0.50

@@ -34,8 +34,9 @@ CATEGORY_TO_TYPE = {
 }
 
 def run_parsing():
-    chromedriver_path = "chromedriver/chromedriver.exe"
-    parser = DNSParser(chromedriver_path=chromedriver_path)
+    # Если хотите использовать ваш локальный chromedriver:
+    parser = DNSParser()
+    # или для автоматической загрузки: parser = DNSParser()
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
             st.info(f"Парсинг {cat_key}...")
@@ -72,42 +73,42 @@ with tab1:
     comps = db.query(Component).all()
     df = pd.DataFrame([(c.id, c.type_id, c.name, c.dns_url) for c in comps],
                       columns=["ID", "Type ID", "Name", "DNS URL"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 with tab2:
     st.subheader("Атрибуты (характеристики)")
     attrs = db.query(Attribute).all()
     df = pd.DataFrame([(a.id, a.name, a.type_id, a.aliases) for a in attrs],
                       columns=["ID", "Name", "Type ID", "Aliases"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 with tab3:
     st.subheader("Значения атрибутов")
     vals = db.query(AttributeValue).all()
     df = pd.DataFrame([(v.id, v.component_id, v.attribute_id, v.value_raw) for v in vals],
                       columns=["ID", "Component ID", "Attribute ID", "Value"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 with tab4:
     st.subheader("История цен")
     prices = db.query(PriceHistory).all()
     df = pd.DataFrame([(p.id, p.component_id, p.price, p.timestamp) for p in prices],
                       columns=["ID", "Component ID", "Price", "Timestamp"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 with tab5:
     st.subheader("История скоров (PassMark)")
     scores = db.query(ScoreHistory).all()
     df = pd.DataFrame([(s.id, s.component_id, s.score, s.source, s.timestamp) for s in scores],
                       columns=["ID", "Component ID", "Score", "Source", "Timestamp"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 with tab6:
     st.subheader("История Benefit")
     benefits = db.query(BenefitHistory).all()
     df = pd.DataFrame([(b.id, b.component_id, b.benefit, b.timestamp) for b in benefits],
                       columns=["ID", "Component ID", "Benefit", "Timestamp"])
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
 st.sidebar.markdown("---")
 st.sidebar.info("Данные обновляются при каждом запуске парсинга. Таблицы истории пополняются новыми записями.")
