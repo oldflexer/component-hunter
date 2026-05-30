@@ -7,10 +7,12 @@ import pandas as pd
 import time
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
-from dnsight.workers.saver import save_component_and_attributes
+from dnsight.parsers.passmark import PassMarkParser
+from dnsight.workers.saver import save_component_and_attributes, update_model_score
 from dnsight.core.config import DNS_CATEGORIES
-from dnsight.core.models import Component, Attribute, AttributeValue, PriceHistory, ScoreHistory, BenefitHistory, ComponentType
+from dnsight.core.models import Component, Attribute, AttributeValue, PriceHistory, ModelScore, BenefitHistory, ComponentType, Model
 from dnsight.core.logging import get_logger
+from sqlalchemy.orm import joinedload
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
 st.title("📊 DNSight - Аналитика комплектующих")
@@ -34,15 +36,14 @@ CATEGORY_TO_TYPE = {
     "hdd25": "Storage",
 }
 
-def run_parsing():
-    # Создаём логгер дашборда заново при каждом запуске (перезапись)
+def run_dns_parsing():
     dashboard_logger = get_logger("dashboard", "logs/dashboard.log", mode='w')
-    parser = DNSParser()  # внутри перезаписывает parser.log
+    parser = DNSParser()
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
-            st.info(f"Парсинг {cat_key}...")
+            st.info(f"Парсинг DNS: {cat_key}...")
             dashboard_logger.info(f"Запуск парсинга категории {cat_key}")
-            products = parser.parse_category(cat_key, max_pages=1, max_items=3)
+            products = parser.parse_category(cat_key)
             st.write(f"Найдено {len(products)} товаров")
             for prod in products:
                 specs = parser.parse_product_details(prod['url'])
@@ -56,20 +57,74 @@ def run_parsing():
                 )
                 time.sleep(0.5)
     except Exception as e:
-        dashboard_logger.exception("Ошибка в процессе парсинга")
-        st.error(f"Ошибка: {e}")
+        dashboard_logger.exception("Ошибка в процессе парсинга DNS")
+        st.error(f"Ошибка DNS: {e}")
     finally:
         parser.close()
-    st.success("Парсинг завершён!")
-    dashboard_logger.info("Парсинг завершён")
+    st.success("Парсинг DNS завершён!")
+    dashboard_logger.info("Парсинг DNS завершён")
 
+def update_passmark_scores():
+    logger = get_logger("passmark_updater", "logs/passmark_updater.log", mode='a')
+    parser = PassMarkParser(headless=True)
+    try:
+        cpu_type = db.query(ComponentType).filter_by(name="CPU").first()
+        gpu_type = db.query(ComponentType).filter_by(name="GPU").first()
+        type_ids = []
+        if cpu_type:
+            type_ids.append(cpu_type.id)
+        if gpu_type:
+            type_ids.append(gpu_type.id)
+        if not type_ids:
+            st.warning("Типы CPU или GPU не найдены в БД. Сначала запустите парсинг DNS.")
+            return
+
+        models = db.query(Model).filter(Model.type_id.in_(type_ids)).all()
+        st.info(f"Найдено моделей для обновления: {len(models)}")
+        progress_bar = st.progress(0)
+        for idx, model in enumerate(models):
+            last_score = db.query(ModelScore).filter_by(model_id=model.id).order_by(ModelScore.updated_at.desc()).first()
+            if last_score and (pd.Timestamp.now() - pd.Timestamp(last_score.updated_at)).days < 7:
+                continue
+            component_type_name = db.query(ComponentType).filter_by(id=model.type_id).first().name
+            score = parser.get_score(model.name, component_type_name)
+            if score is not None:
+                update_model_score(db, model.id, score, source="passmark")
+                logger.info(f"Обновлён скор для {model.name}: {score}")
+            else:
+                logger.warning(f"Не удалось получить скор для {model.name}")
+            time.sleep(2)
+            progress_bar.progress((idx + 1) / len(models))
+        st.success("Обновление PassMark завершено!")
+    except Exception as e:
+        logger.exception("Ошибка при обновлении PassMark")
+        st.error(f"Ошибка PassMark: {e}")
+    finally:
+        parser.close()
+
+def run_full_update():
+    run_dns_parsing()
+    update_passmark_scores()
+
+# --- Боковая панель (кнопки вертикально) ---
 with st.sidebar:
     st.header("Управление")
-    if st.button("🚀 Запустить парсинг (3 товара на категорию)"):
-        with st.spinner("Идёт парсинг..."):
-            run_parsing()
+    if st.button("🔄 Полный цикл (DNS + PassMark)"):
+        with st.spinner("Полный цикл..."):
+            run_full_update()
         st.rerun()
+    if st.button("🌐 Только DNS"):
+        with st.spinner("Парсинг DNS..."):
+            run_dns_parsing()
+        st.rerun()
+    if st.button("⭐ Только PassMark"):
+        with st.spinner("Обновление баллов PassMark..."):
+            update_passmark_scores()
+        st.rerun()
+    st.markdown("---")
+    st.info("Данные обновляются при каждом запуске. PassMark обновляет только модели CPU/GPU.")
 
+# --- Вкладки для просмотра данных ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
     ["Компоненты", "Атрибуты", "Значения атрибутов", "История цен", "История скоров", "История Benefit"]
 )
@@ -104,10 +159,22 @@ with tab4:
 
 with tab5:
     st.subheader("История скоров (PassMark)")
-    scores = db.query(ScoreHistory).all()
-    df = pd.DataFrame([(s.id, s.component_id, s.score, s.source, s.timestamp) for s in scores],
-                      columns=["ID", "Component ID", "Score", "Source", "Timestamp"])
-    st.dataframe(df, width='stretch')
+    query = db.query(
+        Component.id.label("component_id"),
+        Component.name.label("component_name"),
+        Model.name.label("model_name"),
+        ModelScore.score,
+        ModelScore.source,
+        ModelScore.updated_at.label("timestamp")
+    ).join(Model, Component.model_id == Model.id, isouter=True)\
+     .join(ModelScore, Model.id == ModelScore.model_id, isouter=True)\
+     .order_by(ModelScore.updated_at.desc())
+    results = query.all()
+    if results:
+        df = pd.DataFrame(results)
+        st.dataframe(df, width='stretch')
+    else:
+        st.info("Нет данных о скорах. Запустите парсинг, чтобы получить баллы PassMark.")
 
 with tab6:
     st.subheader("История Benefit")
@@ -117,4 +184,3 @@ with tab6:
     st.dataframe(df, width='stretch')
 
 st.sidebar.markdown("---")
-st.sidebar.info("Данные обновляются при каждом запуске парсинга. Таблицы истории пополняются новыми записями.")
