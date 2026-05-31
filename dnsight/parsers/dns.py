@@ -1,139 +1,105 @@
-import logging
-import random
-import time
 import re
-import os
-import urllib.request
-from io import BytesIO
+import asyncio
 from typing import List, Dict, Optional
 
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+import nodriver as uc
 from bs4 import BeautifulSoup
 
-from ..core.config import DNS_CATEGORIES, REQUEST_TIMEOUT
+from ..core.parser import AsyncBaseParser
+from ..core.config import DNS_CATEGORIES
 from ..core.logging import get_logger
 
 
-class DNSParser:
-    def __init__(self, log_file="logs/parser.log", log_level=logging.DEBUG):
-        self.logger = get_logger("parser", log_file, level=log_level, mode='w')
+class AsyncDNSParser(AsyncBaseParser):
+    """Асинхронный парсер DNS‑Shop с использованием nodriver."""
+
+    def __init__(self, log_file="logs/parser.log", log_level="DEBUG"):
+        super().__init__()
+        self.logger = get_logger("async_dns", log_file, mode='w')
         self.base_url = "https://www.dns-shop.ru"
-        self.driver = None
 
-    def _get_driver(self):
-        if self.driver is not None:
-            return self.driver
+    async def _wait_for_products(self, page, timeout: int = 20):
+        """Ожидание появления хотя бы одного товара на странице."""
+        # Сначала ждём загрузки body
+        await page.wait_for('body', timeout=10)
+        # Затем ждём карточки
+        await page.select('div.catalog-product', timeout=timeout)
 
-        # Ищем локальный chromedriver
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        possible_paths = [
-            os.path.join(script_dir, "chromedriver.exe"),
-            os.path.join(script_dir, "..", "chromedriver.exe"),
-            os.path.join(os.getcwd(), "chromedriver.exe"),
-        ]
-        chromedriver_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                chromedriver_path = path
-                break
-
-        if chromedriver_path is None:
-            raise FileNotFoundError("chromedriver.exe не найден. Скачайте версию 148 и положите в папку parsers/")
-
-        self.logger.info(f"Используется chromedriver: {chromedriver_path}")
-
-        # --- Подмена urlopen для обхода сетевых запросов патчера ---
-        original_urlopen = urllib.request.urlopen
-
-        def fake_urlopen(url, *args, **kwargs):
-            url_str = str(url)
-            # Перехватываем запросы к Google API или другим репозиториям
-            if "chromium-browser-snapshots" in url_str or "chrome-for-testing" in url_str:
-                # Возвращаем фиктивный ответ с нужной версией
-                fake_version = b"148.0.7778.217"  # ваша версия Chrome
-                return BytesIO(fake_version)
-            return original_urlopen(url, *args, **kwargs)
-
-        urllib.request.urlopen = fake_urlopen
-        # --- Конец подмены ---
-
-        try:
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option('useAutomationExtension', False)
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-web-security')
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36')
-
-            # Инициализация с локальным драйвером и указанием версии
-            self.driver = uc.Chrome(
-                version_main=148,
-                executable_path=chromedriver_path,
-                options=options
-            )
-            self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
-            self.logger.info("undetected ChromeDriver успешно инициализирован (локально, без сетевых запросов)")
-        finally:
-            # Восстанавливаем оригинальный urlopen
-            urllib.request.urlopen = original_urlopen
-
-        return self.driver
-
-    def _safe_get(self, url: str, retries: int = 3) -> bool:
-        driver = self._get_driver()
-        for attempt in range(retries):
-            try:
-                driver.get(url)
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                return True
-            except Exception as e:
-                self.logger.warning(f"Ошибка загрузки {url}, попытка {attempt+1}/{retries}: {e}")
-                try:
-                    driver.execute_script("window.stop();")
-                except:
-                    pass
-                time.sleep(5 * (attempt + 1))
-        self.logger.error(f"Не удалось загрузить {url} после {retries} попыток")
-        return False
-
-    def parse_category(self, category_key: str, max_pages: Optional[int] = None, max_items: Optional[int] = None) -> List[Dict]:
+    async def parse_category(
+        self,
+        category_key: str,
+        max_pages: Optional[int] = None,  # интерпретируется как макс. количество прокруток
+        max_items: Optional[int] = None
+    ) -> List[Dict]:
         if category_key not in DNS_CATEGORIES:
             raise ValueError(f"Unknown category: {category_key}")
 
         url = DNS_CATEGORIES[category_key]
-        if not self._safe_get(url):
-            return []
+        page = await self.browser.get(url)
+        await page.wait_for('body', timeout=30)
+        self.logger.info(f"Начинаем парсинг категории {category_key} (бесконечная прокрутка)")
 
-        driver = self._get_driver()
-        self.logger.info(f"Начинаем парсинг категории {category_key} (пагинация)")
+        # Ждём появления первой карточки с увеличенным таймаутом
+        try:
+            await page.select('div.catalog-product', timeout=30)
+        except Exception as e:
+            self.logger.warning(f"Не удалось загрузить товары: {e}")
+            return []
 
         products = []
         seen_urls = set()
-        page_num = 1
+        scroll_attempts = 0
+        max_scrolls = max_pages if max_pages else 30
+        no_new_items_count = 0
 
-        while True:
-            if max_pages and page_num > max_pages:
-                self.logger.info(f"Достигнуто максимальное количество страниц ({max_pages})")
+        # Первичный парсинг
+        html = await page.get_content()
+        soup = BeautifulSoup(html, 'lxml')
+        cards = soup.select('div.catalog-product')
+        for card in cards:
+            name_elem = card.select_one('a.catalog-product__name')
+            if not name_elem:
+                continue
+            name = name_elem.text.strip()
+            href = name_elem.get('href')
+            if not href:
+                continue
+            product_url = self.base_url + href if href.startswith('/') else href
+            if product_url in seen_urls:
+                continue
+            seen_urls.add(product_url)
+
+            price_elem = card.select_one('div.product-buy__price')
+            if not price_elem:
+                price_elem = card.select_one('div.catalog-product__price span.price')
+            price = None
+            if price_elem:
+                price_text = re.sub(r'[^\d]', '', price_elem.text)
+                if price_text:
+                    price = float(price_text)
+
+            products.append({
+                'name': name,
+                'url': product_url,
+                'price': price
+            })
+            if max_items and len(products) >= max_items:
+                return products[:max_items]
+
+        self.logger.info(f"Первая загрузка: {len(products)} товаров")
+
+        # Цикл прокрутки
+        while scroll_attempts < max_scrolls:
+            if max_items and len(products) >= max_items:
                 break
 
-            try:
-                WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'div.catalog-product'))
-                )
-            except TimeoutException:
-                self.logger.warning(f"Не удалось загрузить товары на странице {page_num}")
-                break
+            # Прокручиваем вниз
+            await page.scroll_down(800)
+            await asyncio.sleep(3)  # Увеличил задержку
 
-            soup = BeautifulSoup(driver.page_source, 'lxml')
+            # Парсим все карточки заново
+            html = await page.get_content()
+            soup = BeautifulSoup(html, 'lxml')
             cards = soup.select('div.catalog-product')
             new_count = 0
             for card in cards:
@@ -141,10 +107,10 @@ class DNSParser:
                 if not name_elem:
                     continue
                 name = name_elem.text.strip()
-                rel_url = name_elem.get('href')
-                if not rel_url:
+                href = name_elem.get('href')
+                if not href:
                     continue
-                product_url = self.base_url + rel_url if rel_url.startswith('/') else rel_url
+                product_url = self.base_url + href if href.startswith('/') else href
                 if product_url in seen_urls:
                     continue
                 seen_urls.add(product_url)
@@ -167,37 +133,21 @@ class DNSParser:
                 if max_items and len(products) >= max_items:
                     break
 
-            self.logger.info(f"Страница {page_num}: собрано {new_count} товаров, всего {len(products)}")
-
-            if max_items and len(products) >= max_items:
-                break
-
-            # Пагинация через кнопку "Показать ещё"
-            try:
-                show_more_btn = driver.find_element(By.CSS_SELECTOR, 'button.pagination-widget__show-more-btn')
-                if show_more_btn.is_enabled():
-                    driver.execute_script("arguments[0].scrollIntoView(true);", show_more_btn)
-                    time.sleep(0.5)
-                    show_more_btn.click()
-                    page_num += 1
-                    time.sleep(random.uniform(2, 4))
-                    continue
-                else:
-                    self.logger.info("Кнопка 'Показать ещё' неактивна, завершаем")
+            if new_count == 0:
+                no_new_items_count += 1
+                if no_new_items_count >= 2:
+                    self.logger.info("Новых товаров не добавлено, завершаем")
                     break
-            except NoSuchElementException:
-                self.logger.info("Кнопка пагинации не найдена, завершаем")
-                break
-            except Exception as e:
-                self.logger.warning(f"Ошибка пагинации: {e}")
-                break
+            else:
+                no_new_items_count = 0
+                self.logger.info(f"Подгружено {new_count} новых товаров, всего {len(products)}")
+                scroll_attempts = 0  # сбрасываем счётчик, если есть новые товары
+            scroll_attempts += 1
 
         self.logger.info(f"Категория {category_key} обработана, собрано {len(products)} товаров")
         return products[:max_items] if max_items else products
 
-    def parse_product_details(self, product_url: str) -> Dict[str, str]:
-        driver = self._get_driver()
-
+    async def parse_product_details(self, product_url: str) -> Dict[str, str]:
         if '/product/' in product_url:
             parts = product_url.split('/product/')
             if len(parts) == 2:
@@ -207,36 +157,23 @@ class DNSParser:
         else:
             characteristics_url = product_url.rstrip('/') + '/characteristics/'
 
-        for attempt in range(3):
-            try:
-                driver.get(characteristics_url)
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'body'))
-                )
-                break
-            except Exception as e:
-                self.logger.warning(f"Ошибка загрузки {characteristics_url}: {e}, попытка {attempt+1}/3")
-                time.sleep(5)
-                if attempt == 2:
-                    return {}
+        page = await self.browser.get(characteristics_url)
+        try:
+            await page.select('.product-characteristics__spec, .characteristics__item, .product-params__item', timeout=15)
+        except Exception:
+            self.logger.warning(f"Блок характеристик не найден для {product_url}")
+            return {}
 
         try:
-            expand_btn = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, '.product-characteristics__expand'))
-            )
-            expand_btn.click()
-            time.sleep(random.uniform(1, 2))
+            expand_btn = await page.select('.product-characteristics__expand', timeout=5)
+            if expand_btn:
+                await expand_btn.click()
+                await asyncio.sleep(1)
         except Exception:
             pass
 
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '.product-characteristics__spec, .characteristics__item, .product-params__item'))
-            )
-        except Exception:
-            self.logger.warning(f"Блок характеристик не найден для {product_url}")
-
-        soup = BeautifulSoup(driver.page_source, 'lxml')
+        html = await page.get_content()
+        soup = BeautifulSoup(html, 'lxml')
         specs = {}
 
         spec_items = soup.select('div.product-characteristics__spec')
@@ -275,8 +212,3 @@ class DNSParser:
 
         self.logger.debug(f"Извлечено {len(specs)} характеристик для {product_url}")
         return specs
-
-    def close(self):
-        if self.driver:
-            self.driver.quit()
-            self.logger.info("Драйвер закрыт")
