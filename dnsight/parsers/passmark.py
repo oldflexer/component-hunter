@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from ..core.config import REQUEST_TIMEOUT
 from ..core.logging import get_logger
 
-logger = get_logger("passmark", "logs/passmark.log", mode='a')
+logger = get_logger("passmark", "logs/passmark.log", mode='w')
 
 
 class PassMarkParser:
@@ -25,13 +25,14 @@ class PassMarkParser:
     def _get_driver(self):
         if self.driver is None:
             options = uc.ChromeOptions()
+            options.page_load_strategy = 'eager'
             if self.headless:
                 options.add_argument('--headless')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-            self.driver = uc.Chrome(options=options)
+            self.driver = uc.Chrome(version_main=148, options=options)
             self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
-            logger.info("Инициализирован ChromeDriver для PassMark")
+            logger.info("Инициализирован ChromeDriver для PassMark (версия 148)")
         return self.driver
 
     def _search_cpu(self, model_name: str) -> Optional[float]:
@@ -65,7 +66,6 @@ class PassMarkParser:
             logger.debug(f"Нет строк в таблице для CPU {model_name}")
             return None
 
-        # CPU Mark находится в 4-м столбце (индекс 3)
         columns = first_row.find_all("td")
         if len(columns) < 4:
             logger.debug(f"Недостаточно колонок в таблице для CPU {model_name}")
@@ -110,7 +110,6 @@ class PassMarkParser:
             logger.debug(f"Нет строк в таблице для GPU {model_name}")
             return None
 
-        # G3D Mark находится в 3-м столбце (индекс 2)
         columns = first_row.find_all("td")
         if len(columns) < 3:
             logger.debug(f"Недостаточно колонок в таблице для GPU {model_name}")

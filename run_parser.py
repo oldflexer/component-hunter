@@ -1,8 +1,9 @@
 import time
 import logging
+import asyncio
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
-from dnsight.workers.saver import save_component_and_attributes
+from dnsight.workers.saver import save_product_and_attributes
 from dnsight.core.config import DNS_CATEGORIES
 import os
 from dnsight.core.logging import setup_logging
@@ -37,11 +38,11 @@ def parse_and_save_category(parser, db, category_key: str, max_pages: int = 1, m
     for idx, prod in enumerate(products, 1):
         logger.info(f"[{idx}/{len(products)}] Обработка: {prod['name']}")
         specs = parser.parse_product_details(prod['url'])
-        save_component_and_attributes(
+        save_product_and_attributes(
             db=db,
             type_name=type_name,
-            component_name=prod['name'],
-            dns_url=prod['url'],
+            product_name=prod['name'],
+            url=prod['url'],
             price=prod['price'],
             specs=specs
         )
@@ -52,10 +53,13 @@ def main():
     logger.info("Запуск парсера DNSight")
     init_db()
     db = get_db()
-    parser = DNSParser()
+    parser = DNSParser(headless=True)
     try:
         for cat_key in CATEGORY_TO_TYPE:
-            parse_and_save_category(parser, db, cat_key, max_pages=1, max_items=3)
+            if cat_key not in DNS_CATEGORIES:
+                logger.warning(f"Категория {cat_key} отсутствует в конфиге, пропускаем")
+                continue
+            parse_and_save_category(parser, db, cat_key, max_pages=10, max_items=None)  # все товары
     except Exception as e:
         logger.exception("Критическая ошибка в основном цикле")
     finally:

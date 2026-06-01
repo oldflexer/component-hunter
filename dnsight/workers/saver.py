@@ -3,12 +3,9 @@ from typing import Optional, Dict
 from datetime import datetime
 from ..core.models import Product, Attribute, AttributeValue, ProductType, PriceHistory, Model, ModelScore
 from ..core.logging import get_logger
-from ..parsers.passmark import PassMarkParser
-from ..calculators.benefit import update_benefit_for_product   # ниже переименуем
+from ..calculators.benefit import update_benefit_for_product
 
 logger = get_logger("saver", "logs/saver.log", mode='w')
-
-_score_cache = {}
 
 def ensure_product_type(db: Session, type_name: str) -> ProductType:
     pt = db.query(ProductType).filter_by(name=type_name).first()
@@ -37,19 +34,6 @@ def get_or_create_model(db: Session, model_name: str, type_id: int) -> Model:
         logger.info(f"Создана новая модель: {model_name}")
     return model
 
-def get_latest_model_score(db: Session, model_id: int) -> Optional[float]:
-    score_record = db.query(ModelScore).filter_by(model_id=model_id).order_by(ModelScore.updated_at.desc()).first()
-    return score_record.score if score_record else None # pyright: ignore[reportReturnType]
-
-def update_model_score(db: Session, model_id: int, score: float, source: str = "passmark") -> None:
-    last_score = get_latest_model_score(db, model_id)
-    if last_score == score:
-        return
-    new_score = ModelScore(model_id=model_id, score=score, source=source, updated_at=datetime.utcnow())
-    db.add(new_score)
-    db.flush()
-    logger.info(f"Обновлён скор модели ID {model_id}: {score} ({source})")
-
 def save_product_and_attributes(
     db: Session,
     type_name: str,
@@ -69,21 +53,7 @@ def save_product_and_attributes(
     model = None
     if model_name and type_name in ("CPU", "GPU"):
         model = get_or_create_model(db, model_name, type_id_value)
-        if model.id not in _score_cache:
-            last_score = get_latest_model_score(db, model.id)
-            if last_score is not None:
-                _score_cache[model.id] = last_score
-            else:
-                parser = PassMarkParser(headless=True)
-                try:
-                    score = parser.get_score(model_name, type_name)
-                    if score is not None:
-                        update_model_score(db, model.id, score, "passmark")
-                        _score_cache[model.id] = score
-                    else:
-                        _score_cache[model.id] = None
-                finally:
-                    parser.close()
+        # PassMark НЕ вызываем – только создание модели
 
     # Сохранение продукта
     product = db.query(Product).filter_by(url=url).first()
@@ -135,7 +105,6 @@ def save_product_and_attributes(
     db.commit()
     logger.info(f"Сохранён продукт {product_name} с {len(specs)} характеристиками")
 
-    # Benefit
     update_benefit_for_product(product, db)
 
     return product
