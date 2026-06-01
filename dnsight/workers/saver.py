@@ -1,23 +1,23 @@
 from sqlalchemy.orm import Session
 from typing import Optional, Dict
 from datetime import datetime
-from ..core.models import Component, Attribute, AttributeValue, ComponentType, PriceHistory, Model, ModelScore
+from ..core.models import Product, Attribute, AttributeValue, ProductType, PriceHistory, Model, ModelScore
 from ..core.logging import get_logger
 from ..parsers.passmark import PassMarkParser
-from ..calculators.benefit import update_benefit_for_component   # <-- добавить
+from ..calculators.benefit import update_benefit_for_product   # ниже переименуем
 
-logger = get_logger("saver", "logs/saver.log", mode='a')
+logger = get_logger("saver", "logs/saver.log", mode='w')
 
 _score_cache = {}
 
-def ensure_component_type(db: Session, type_name: str) -> ComponentType:
-    ct = db.query(ComponentType).filter_by(name=type_name).first()
-    if not ct:
-        ct = ComponentType(name=type_name)
-        db.add(ct)
+def ensure_product_type(db: Session, type_name: str) -> ProductType:
+    pt = db.query(ProductType).filter_by(name=type_name).first()
+    if not pt:
+        pt = ProductType(name=type_name)
+        db.add(pt)
         db.flush()
-        logger.info(f"Создан новый тип компонента: {type_name}")
-    return ct
+        logger.info(f"Создан новый тип продукта: {type_name}")
+    return pt
 
 def ensure_attribute(db: Session, attr_name: str, type_id: Optional[int] = None) -> Attribute:
     attr = db.query(Attribute).filter_by(name=attr_name).first()
@@ -39,7 +39,7 @@ def get_or_create_model(db: Session, model_name: str, type_id: int) -> Model:
 
 def get_latest_model_score(db: Session, model_id: int) -> Optional[float]:
     score_record = db.query(ModelScore).filter_by(model_id=model_id).order_by(ModelScore.updated_at.desc()).first()
-    return score_record.score if score_record else None
+    return score_record.score if score_record else None # pyright: ignore[reportReturnType]
 
 def update_model_score(db: Session, model_id: int, score: float, source: str = "passmark") -> None:
     last_score = get_latest_model_score(db, model_id)
@@ -50,24 +50,21 @@ def update_model_score(db: Session, model_id: int, score: float, source: str = "
     db.flush()
     logger.info(f"Обновлён скор модели ID {model_id}: {score} ({source})")
 
-def save_component_and_attributes(
+def save_product_and_attributes(
     db: Session,
     type_name: str,
-    component_name: str,
-    dns_url: str,
+    product_name: str,
+    url: str,
     price: Optional[float],
     specs: Dict[str, str]
-) -> Component:
-    comp_type = ensure_component_type(db, type_name)
-    type_id_value = comp_type.id
+) -> Product:
+    prod_type = ensure_product_type(db, type_name)
+    type_id_value = prod_type.id
 
     # Извлечение названия модели
-    model_name = None
-    if "Модель" in specs:
-        model_name = specs["Модель"].strip()
-    else:
-        raw_name = component_name.split('[')[0].strip()
-        model_name = raw_name
+    model_name = specs.get("Модель") or specs.get("Графический процессор")
+    if not model_name:
+        model_name = product_name.split('[')[0].strip()
 
     model = None
     if model_name and type_name in ("CPU", "GPU"):
@@ -88,57 +85,57 @@ def save_component_and_attributes(
                 finally:
                     parser.close()
 
-    # Сохранение компонента
-    comp = db.query(Component).filter_by(dns_url=dns_url).first()
-    if comp:
-        comp.name = component_name
-        comp.updated_at = datetime.utcnow()
+    # Сохранение продукта
+    product = db.query(Product).filter_by(url=url).first()
+    if product:
+        product.name = product_name
+        product.updated_at = datetime.utcnow()
         if model:
-            comp.model_id = model.id
+            product.model_id = model.id
     else:
-        comp = Component(
+        product = Product(
             type_id=type_id_value,
             model_id=model.id if model else None,
-            name=component_name,
-            dns_url=dns_url
+            name=product_name,
+            url=url
         )
-        db.add(comp)
+        db.add(product)
         db.flush()
-        logger.info(f"Добавлен новый компонент: {component_name}")
+        logger.info(f"Добавлен новый продукт: {product_name}")
 
     # Цена
     if price is not None:
         price_history = PriceHistory(
-            component_id=comp.id,
+            product_id=product.id,
             price=price,
             timestamp=datetime.utcnow()
         )
         db.add(price_history)
-        logger.debug(f"Добавлена цена {price} для компонента {comp.id}")
+        logger.debug(f"Добавлена цена {price} для продукта {product.id}")
 
     # Характеристики
     for attr_name, value in specs.items():
         attr = ensure_attribute(db, attr_name, type_id_value)
         existing = db.query(AttributeValue).filter_by(
-            component_id=comp.id,
+            product_id=product.id,
             attribute_id=attr.id
         ).first()
         if existing:
-            existing.value_raw = value
+            existing.raw_value = value
             existing.updated_at = datetime.utcnow()
         else:
             attr_value = AttributeValue(
-                component_id=comp.id,
+                product_id=product.id,
                 attribute_id=attr.id,
-                value_raw=value
+                raw_value=value
             )
             db.add(attr_value)
             logger.debug(f"Добавлено значение атрибута '{attr_name}' = '{value}'")
 
     db.commit()
-    logger.info(f"Сохранён компонент {component_name} с {len(specs)} характеристиками")
+    logger.info(f"Сохранён продукт {product_name} с {len(specs)} характеристиками")
 
-    # Добавляем расчёт Benefit для этого компонента
-    update_benefit_for_component(comp, db)
+    # Benefit
+    update_benefit_for_product(product, db)
 
-    return comp
+    return product

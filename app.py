@@ -8,11 +8,10 @@ import time
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
 from dnsight.parsers.passmark import PassMarkParser
-from dnsight.workers.saver import save_component_and_attributes, update_model_score
+from dnsight.workers.saver import save_product_and_attributes, update_model_score
 from dnsight.core.config import DNS_CATEGORIES
-from dnsight.core.models import Component, Attribute, AttributeValue, PriceHistory, ModelScore, BenefitHistory, ComponentType, Model
+from dnsight.core.models import Product, Attribute, AttributeValue, PriceHistory, ModelScore, BenefitHistory, ProductType, Model
 from dnsight.core.logging import get_logger
-from sqlalchemy.orm import joinedload
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
 st.title("📊 DNSight - Аналитика комплектующих")
@@ -41,17 +40,21 @@ def run_dns_parsing():
     parser = DNSParser()
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
+            # Пропускаем, если категория не указана в конфиге
+            if cat_key not in DNS_CATEGORIES:
+                dashboard_logger.warning(f"Категория {cat_key} отсутствует в конфиге, пропускаем")
+                continue
             st.info(f"Парсинг DNS: {cat_key}...")
             dashboard_logger.info(f"Запуск парсинга категории {cat_key}")
             products = parser.parse_category(cat_key)
             st.write(f"Найдено {len(products)} товаров")
             for prod in products:
                 specs = parser.parse_product_details(prod['url'])
-                save_component_and_attributes(
+                save_product_and_attributes(
                     db=db,
                     type_name=type_name,
-                    component_name=prod['name'],
-                    dns_url=prod['url'],
+                    product_name=prod['name'],
+                    url=prod['url'],
                     price=prod['price'],
                     specs=specs
                 )
@@ -68,8 +71,8 @@ def update_passmark_scores():
     logger = get_logger("passmark_updater", "logs/passmark_updater.log", mode='a')
     parser = PassMarkParser(headless=True)
     try:
-        cpu_type = db.query(ComponentType).filter_by(name="CPU").first()
-        gpu_type = db.query(ComponentType).filter_by(name="GPU").first()
+        cpu_type = db.query(ProductType).filter_by(name="CPU").first()
+        gpu_type = db.query(ProductType).filter_by(name="GPU").first()
         type_ids = []
         if cpu_type:
             type_ids.append(cpu_type.id)
@@ -86,8 +89,8 @@ def update_passmark_scores():
             last_score = db.query(ModelScore).filter_by(model_id=model.id).order_by(ModelScore.updated_at.desc()).first()
             if last_score and (pd.Timestamp.now() - pd.Timestamp(last_score.updated_at)).days < 7:
                 continue
-            component_type_name = db.query(ComponentType).filter_by(id=model.type_id).first().name
-            score = parser.get_score(model.name, component_type_name)
+            product_type_name = db.query(ProductType).filter_by(id=model.type_id).first().name
+            score = parser.get_score(model.name, product_type_name)
             if score is not None:
                 update_model_score(db, model.id, score, source="passmark")
                 logger.info(f"Обновлён скор для {model.name}: {score}")
@@ -106,7 +109,7 @@ def run_full_update():
     run_dns_parsing()
     update_passmark_scores()
 
-# --- Боковая панель (кнопки вертикально) ---
+# --- Боковая панель ---
 with st.sidebar:
     st.header("Управление")
     if st.button("🔄 Полный цикл (DNS + PassMark)"):
@@ -124,49 +127,49 @@ with st.sidebar:
     st.markdown("---")
     st.info("Данные обновляются при каждом запуске. PassMark обновляет только модели CPU/GPU.")
 
-# --- Вкладки для просмотра данных ---
+# --- Вкладки для просмотра данных (адаптированы под новую схему) ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["Компоненты", "Атрибуты", "Значения атрибутов", "История цен", "История скоров", "История Benefit"]
+    ["Продукты", "Атрибуты", "Значения атрибутов", "История цен", "История скоров", "История Benefit"]
 )
 
 with tab1:
-    st.subheader("Компоненты")
-    comps = db.query(Component).all()
-    df = pd.DataFrame([(c.id, c.type_id, c.name, c.dns_url) for c in comps],
-                      columns=["ID", "Type ID", "Name", "DNS URL"])
+    st.subheader("Продукты")
+    products = db.query(Product).all()
+    df = pd.DataFrame([(p.id, p.type_id, p.name, p.url) for p in products],
+                      columns=["ID", "Type ID", "Name", "URL"])
     st.dataframe(df, width='stretch')
 
 with tab2:
     st.subheader("Атрибуты (характеристики)")
     attrs = db.query(Attribute).all()
-    df = pd.DataFrame([(a.id, a.name, a.type_id, a.aliases) for a in attrs],
-                      columns=["ID", "Name", "Type ID", "Aliases"])
+    df = pd.DataFrame([(a.id, a.name, a.type_id) for a in attrs],
+                      columns=["ID", "Name", "Type ID"])
     st.dataframe(df, width='stretch')
 
 with tab3:
     st.subheader("Значения атрибутов")
     vals = db.query(AttributeValue).all()
-    df = pd.DataFrame([(v.id, v.component_id, v.attribute_id, v.value_raw) for v in vals],
-                      columns=["ID", "Component ID", "Attribute ID", "Value"])
+    df = pd.DataFrame([(v.id, v.product_id, v.attribute_id, v.raw_value) for v in vals],
+                      columns=["ID", "Product ID", "Attribute ID", "Value"])
     st.dataframe(df, width='stretch')
 
 with tab4:
     st.subheader("История цен")
     prices = db.query(PriceHistory).all()
-    df = pd.DataFrame([(p.id, p.component_id, p.price, p.timestamp) for p in prices],
-                      columns=["ID", "Component ID", "Price", "Timestamp"])
+    df = pd.DataFrame([(p.id, p.product_id, p.price, p.timestamp) for p in prices],
+                      columns=["ID", "Product ID", "Price", "Timestamp"])
     st.dataframe(df, width='stretch')
 
 with tab5:
     st.subheader("История скоров (PassMark)")
     query = db.query(
-        Component.id.label("component_id"),
-        Component.name.label("component_name"),
+        Product.id.label("product_id"),
+        Product.name.label("product_name"),
         Model.name.label("model_name"),
         ModelScore.score,
         ModelScore.source,
         ModelScore.updated_at.label("timestamp")
-    ).join(Model, Component.model_id == Model.id, isouter=True)\
+    ).join(Model, Product.model_id == Model.id, isouter=True)\
      .join(ModelScore, Model.id == ModelScore.model_id, isouter=True)\
      .order_by(ModelScore.updated_at.desc())
     results = query.all()
@@ -179,8 +182,6 @@ with tab5:
 with tab6:
     st.subheader("История Benefit")
     benefits = db.query(BenefitHistory).all()
-    df = pd.DataFrame([(b.id, b.component_id, b.benefit, b.timestamp) for b in benefits],
-                      columns=["ID", "Component ID", "Benefit", "Timestamp"])
+    df = pd.DataFrame([(b.id, b.product_id, b.benefit, b.timestamp) for b in benefits],
+                      columns=["ID", "Product ID", "Benefit", "Timestamp"])
     st.dataframe(df, width='stretch')
-
-st.sidebar.markdown("---")

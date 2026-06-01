@@ -28,61 +28,10 @@ class DNSParser:
         if self.driver is not None:
             return self.driver
 
-        # Ищем локальный chromedriver
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        possible_paths = [
-            os.path.join(script_dir, "chromedriver.exe"),
-            os.path.join(script_dir, "..", "chromedriver.exe"),
-            os.path.join(os.getcwd(), "chromedriver.exe"),
-        ]
-        chromedriver_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                chromedriver_path = path
-                break
-
-        if chromedriver_path is None:
-            raise FileNotFoundError("chromedriver.exe не найден. Скачайте версию 148 и положите в папку parsers/")
-
-        self.logger.info(f"Используется chromedriver: {chromedriver_path}")
-
-        # --- Подмена urlopen для обхода сетевых запросов патчера ---
-        original_urlopen = urllib.request.urlopen
-
-        def fake_urlopen(url, *args, **kwargs):
-            url_str = str(url)
-            # Перехватываем запросы к Google API или другим репозиториям
-            if "chromium-browser-snapshots" in url_str or "chrome-for-testing" in url_str:
-                # Возвращаем фиктивный ответ с нужной версией
-                fake_version = b"148.0.7778.217"  # ваша версия Chrome
-                return BytesIO(fake_version)
-            return original_urlopen(url, *args, **kwargs)
-
-        urllib.request.urlopen = fake_urlopen
-        # --- Конец подмены ---
-
-        try:
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option('useAutomationExtension', False)
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-web-security')
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36')
-
-            # Инициализация с локальным драйвером и указанием версии
-            self.driver = uc.Chrome(
-                version_main=148,
-                executable_path=chromedriver_path,
-                options=options
-            )
-            self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
-            self.logger.info("undetected ChromeDriver успешно инициализирован (локально, без сетевых запросов)")
-        finally:
-            # Восстанавливаем оригинальный urlopen
-            urllib.request.urlopen = original_urlopen
+        options = uc.ChromeOptions()
+        self.driver = uc.Chrome(version_main=148, options=options)
+        self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
+        self.logger.info("undetected ChromeDriver инициализирован (версия 148, без локального драйвера)")
 
         return self.driver
 
