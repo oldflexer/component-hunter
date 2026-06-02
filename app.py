@@ -12,9 +12,10 @@ from dnsight.workers.update_passmark import update_passmark_scores
 from dnsight.core.config import DNS_CATEGORIES
 from dnsight.core.models import Product, Attribute, AttributeValue, PriceHistory, ModelScore, BenefitHistory, ProductType, Model
 from dnsight.core.logging import get_logger
+from sqlalchemy import func
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
-st.title("📊 DNSight - Аналитика комплектующих")
+st.title("📊 DNSight")
 
 init_db()
 db = get_db()
@@ -80,23 +81,22 @@ def run_full_update():
 # --- Боковая панель ---
 with st.sidebar:
     st.header("Управление")
-    # Кнопки во всю ширину
-    if st.button("🔄 Полный цикл (DNS + PassMark)", use_container_width=True):
+    if st.button("🔄 Полный цикл", use_container_width=True):
         with st.spinner("Полный цикл..."):
             run_full_update()
         st.rerun()
-    if st.button("🌐 Только DNS", use_container_width=True):
+    if st.button("🔸 Только DNS", use_container_width=True):
         with st.spinner("Парсинг DNS..."):
             run_dns_parsing()
         st.rerun()
-    if st.button("⭐ Только PassMark", use_container_width=True):
+    if st.button("🔥 Только PassMark", use_container_width=True):
         with st.spinner("Обновление баллов PassMark..."):
             run_passmark_update()
         st.rerun()
     st.markdown("---")
     
-    # Выпадающий список с одной опцией "Таблицы"
-    selected_page = st.selectbox("Выберите раздел", ["Таблицы"])
+    # Выпадающий список с двумя опциями: "Таблицы" и "Аналитика"
+    selected_page = st.selectbox("Выберите раздел", ["Таблицы", "Диагностика"])
 
 # --- Основная область ---
 if selected_page == "Таблицы":
@@ -193,3 +193,69 @@ if selected_page == "Таблицы":
             st.dataframe(df, width='stretch')
         else:
             st.info("Нет данных о Benefit. Запустите парсинг DNS и PassMark.")
+
+elif selected_page == "Аналитика":
+    # Вкладки для CPU и GPU
+    cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
+    
+    # Функция для получения компонентов без характеристик
+    def get_products_without_attributes(component_type_name: str) -> pd.DataFrame:
+        # Находим тип продукта
+        type_obj = db.query(ProductType).filter_by(name=component_type_name).first()
+        if not type_obj:
+            return pd.DataFrame()
+        # Продукты этого типа, у которых нет записей в attribute_values
+        products = db.query(Product).filter(
+            Product.type_id == type_obj.id,
+            ~Product.attribute_values.any()
+        ).all()
+        if products:
+            return pd.DataFrame([(p.id, p.name, p.url) for p in products],
+                                columns=["ID", "Name", "URL"])
+        return pd.DataFrame()
+
+    # Функция для получения компонентов без баллов PassMark
+    def get_products_without_scores(component_type_name: str) -> pd.DataFrame:
+        type_obj = db.query(ProductType).filter_by(name=component_type_name).first()
+        if not type_obj:
+            return pd.DataFrame()
+        models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
+        products = db.query(Product).filter(
+            Product.type_id == type_obj.id,
+            Product.model_id.isnot(None),
+            Product.model_id.notin_(models_with_scores)
+        ).all()
+        if products:
+            return pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products],
+                                columns=["ID", "Name", "Model Name", "URL"])
+        return pd.DataFrame()
+
+    with cpu_tab:
+        st.subheader("CPU – без характеристик")
+        df_no_attrs = get_products_without_attributes("CPU")
+        if not df_no_attrs.empty:
+            st.dataframe(df_no_attrs, width='stretch')
+        else:
+            st.info("Все CPU имеют характеристики.")
+        
+        st.subheader("CPU – без баллов PassMark")
+        df_no_scores = get_products_without_scores("CPU")
+        if not df_no_scores.empty:
+            st.dataframe(df_no_scores, width='stretch')
+        else:
+            st.info("Все CPU имеют баллы PassMark.")
+
+    with gpu_tab:
+        st.subheader("GPU – без характеристик")
+        df_no_attrs = get_products_without_attributes("GPU")
+        if not df_no_attrs.empty:
+            st.dataframe(df_no_attrs, width='stretch')
+        else:
+            st.info("Все GPU имеют характеристики.")
+        
+        st.subheader("GPU – без баллов PassMark")
+        df_no_scores = get_products_without_scores("GPU")
+        if not df_no_scores.empty:
+            st.dataframe(df_no_scores, width='stretch')
+        else:
+            st.info("Все GPU имеют баллы PassMark.")
