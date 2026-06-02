@@ -37,7 +37,7 @@ CATEGORY_TO_TYPE = {
 
 def run_dns_parsing():
     dashboard_logger = get_logger("dashboard", "logs/dashboard.log", mode='w')
-    parser = DNSParser(headless=True)
+    parser = DNSParser(headless=False)
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
             if cat_key not in DNS_CATEGORIES:
@@ -68,7 +68,7 @@ def run_dns_parsing():
 
 def run_passmark_update():
     try:
-        update_passmark_scores(headless=True)
+        update_passmark_scores(headless=False)
     except Exception as e:
         st.error(f"Ошибка PassMark: {e}")
         raise
@@ -100,76 +100,96 @@ with st.sidebar:
 
 # --- Основная область ---
 if selected_page == "Таблицы":
-    # Создаём вкладки для всех таблиц БД
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        ["Продукты", "Атрибуты", "Значения атрибутов", "История цен", "История скоров", "История Benefit"]
+    # Вкладки для каждой таблицы БД
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+        [
+            "product_types",
+            "models",
+            "model_scores",
+            "products",
+            "attributes",
+            "attribute_values",
+            "price_history",
+            "benefit_history"
+        ]
     )
 
     with tab1:
-        st.subheader("Продукты")
-        products = db.query(Product).all()
-        if products:
-            df = pd.DataFrame([(p.id, p.type_id, p.name, p.url) for p in products],
-                              columns=["ID", "Type ID", "Name", "URL"])
+        st.subheader("Типы продуктов (product_types)")
+        data = db.query(ProductType).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.name, r.description) for r in data],
+                              columns=["id", "name", "description"])
+            st.dataframe(df, width='stretch')
+        else:
+            st.info("Нет данных.")
+
+    with tab2:
+        st.subheader("Модели (models)")
+        data = db.query(Model).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.name, r.type_id) for r in data],
+                              columns=["id", "name", "type_id"])
             st.dataframe(df, width='stretch')
         else:
             st.info("Нет данных. Запустите парсинг DNS.")
 
-    with tab2:
-        st.subheader("Атрибуты (характеристики)")
-        attrs = db.query(Attribute).all()
-        if attrs:
-            df = pd.DataFrame([(a.id, a.name, a.type_id) for a in attrs],
-                              columns=["ID", "Name", "Type ID"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных.")
-
     with tab3:
-        st.subheader("Значения атрибутов")
-        vals = db.query(AttributeValue).all()
-        if vals:
-            df = pd.DataFrame([(v.id, v.product_id, v.attribute_id, v.raw_value) for v in vals],
-                              columns=["ID", "Product ID", "Attribute ID", "Value"])
+        st.subheader("Скоры моделей (model_scores)")
+        data = db.query(ModelScore).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.model_id, r.score, r.source, r.updated_at) for r in data],
+                              columns=["id", "model_id", "score", "source", "updated_at"])
             st.dataframe(df, width='stretch')
         else:
-            st.info("Нет данных.")
+            st.info("Нет данных. Запустите обновление PassMark.")
 
     with tab4:
-        st.subheader("История цен")
-        prices = db.query(PriceHistory).all()
-        if prices:
-            df = pd.DataFrame([(p.id, p.product_id, p.price, p.timestamp) for p in prices],
-                              columns=["ID", "Product ID", "Price", "Timestamp"])
+        st.subheader("Продукты (products)")
+        data = db.query(Product).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.type_id, r.model_id, r.name, r.url, r.created_at, r.updated_at) for r in data],
+                              columns=["id", "type_id", "model_id", "name", "url", "created_at", "updated_at"])
+            st.dataframe(df, width='stretch')
+        else:
+            st.info("Нет данных. Запустите парсинг DNS.")
+
+    with tab5:
+        st.subheader("Атрибуты (attributes)")
+        data = db.query(Attribute).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.name, r.type_id) for r in data],
+                              columns=["id", "name", "type_id"])
+            st.dataframe(df, width='stretch')
+        else:
+            st.info("Нет данных.")
+
+    with tab6:
+        st.subheader("Значения атрибутов (attribute_values)")
+        data = db.query(AttributeValue).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.product_id, r.attribute_id, r.raw_value, r.updated_at) for r in data],
+                              columns=["id", "product_id", "attribute_id", "raw_value", "updated_at"])
+            st.dataframe(df, width='stretch')
+        else:
+            st.info("Нет данных.")
+
+    with tab7:
+        st.subheader("История цен (price_history)")
+        data = db.query(PriceHistory).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.product_id, r.price, r.timestamp) for r in data],
+                              columns=["id", "product_id", "price", "timestamp"])
             st.dataframe(df, width='stretch')
         else:
             st.info("Нет данных о ценах.")
 
-    with tab5:
-        st.subheader("История скоров (PassMark)")
-        query = db.query(
-            Product.id.label("product_id"),
-            Product.name.label("product_name"),
-            Model.name.label("model_name"),
-            ModelScore.score,
-            ModelScore.source,
-            ModelScore.updated_at.label("timestamp")
-        ).join(Model, Product.model_id == Model.id, isouter=True)\
-         .join(ModelScore, Model.id == ModelScore.model_id, isouter=True)\
-         .order_by(ModelScore.updated_at.desc())
-        results = query.all()
-        if results:
-            df = pd.DataFrame(results)
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных о скорах. Запустите парсинг, чтобы получить баллы PassMark.")
-
-    with tab6:
-        st.subheader("История Benefit")
-        benefits = db.query(BenefitHistory).all()
-        if benefits:
-            df = pd.DataFrame([(b.id, b.product_id, b.benefit, b.timestamp) for b in benefits],
-                              columns=["ID", "Product ID", "Benefit", "Timestamp"])
+    with tab8:
+        st.subheader("История Benefit (benefit_history)")
+        data = db.query(BenefitHistory).all()
+        if data:
+            df = pd.DataFrame([(r.id, r.product_id, r.benefit, r.timestamp) for r in data],
+                              columns=["id", "product_id", "benefit", "timestamp"])
             st.dataframe(df, width='stretch')
         else:
             st.info("Нет данных о Benefit. Запустите парсинг DNS и PassMark.")

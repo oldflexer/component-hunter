@@ -27,14 +27,18 @@ class DNSParser:
             return self.driver
 
         options = uc.ChromeOptions()
+        if self.headless:
+            options.add_argument('--headless')
         options.page_load_strategy = 'eager'
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        if self.headless:
-            options.add_argument('--headless')
+        
         self.driver = uc.Chrome(version_main=148, options=options)
         self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
+        time.sleep(5)
+        self.driver.switch_to.window(self.driver.current_window_handle)
         self.logger.info(f"undetected ChromeDriver инициализирован (версия 148, eager strategy, headless={self.headless})")
+        
         return self.driver
 
     def parse_category(self, category_key: str, max_pages: Optional[int] = None, max_items: Optional[int] = None) -> List[Dict]:
@@ -55,13 +59,44 @@ class DNSParser:
             self.logger.error(f"Не удалось загрузить {url} после 3 попыток")
             return []
 
+        # --- Смена города на "Каменск-Уральский" ---
+        try:
+            # 1. Кликнуть на текущий город (Москва)
+            city_selector = 'span.city-select__text_90n, span[data-analytics-city-id], span[class*="city-select__text"]'
+            city_element = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, city_selector))
+            )
+            city_element.click()
+            self.logger.info("Кликнут текущий город, ожидаем модальное окно")
+            time.sleep(3)
+
+            # 2. Найти поле ввода города
+            input_selector = 'input[data-city-select="city-modal-input-attr"], input[placeholder="Найти город"]'
+            city_input = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, input_selector))
+            )
+            city_input.clear()
+            city_input.send_keys("Каменск-Уральский")
+            self.logger.info("Введён город 'Каменск-Уральский'")
+            time.sleep(3)
+
+            # 3. Найти кнопку с нужным городом и кликнуть
+            target_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button//mark[contains(text(),'Каменск-Уральский')]/ancestor::button"))
+            )
+            target_button.click()
+            self.logger.info("Выбран город 'Каменск-Уральский'")
+            time.sleep(3)  # ожидание перезагрузки страницы
+        except Exception as e:
+            self.logger.warning(f"Не удалось сменить город: {e}. Продолжаем с текущим городом.")
+
+        # --- Далее существующий код парсинга ---
         self.logger.info(f"Начинаем парсинг категории {category_key} (бесконечная прокрутка)")
 
         products = []
         seen_urls = set()
         last_height = 0
         scroll_attempts = 0
-        max_scrolls = max_pages if max_pages else 30
 
         # Ждём появления первых карточек
         try:
@@ -114,15 +149,15 @@ class DNSParser:
         if max_items and len(products) >= max_items:
             return products[:max_items]
 
-        while scroll_attempts < max_scrolls:
-            # Прокрутка вниз
+        scrolling = True
+        while scrolling:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
+            time.sleep(5)
 
             new_height = driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
                 scroll_attempts += 1
-                if scroll_attempts >= 3:
+                if scroll_attempts >= 10:
                     self.logger.info("Высота страницы не меняется, завершаем")
                     break
             else:

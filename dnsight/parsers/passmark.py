@@ -23,16 +23,20 @@ class PassMarkParser:
         self.gpu_base_url = "https://www.videocardbenchmark.net"
 
     def _get_driver(self):
-        if self.driver is None:
-            options = uc.ChromeOptions()
-            options.page_load_strategy = 'eager'
-            if self.headless:
-                options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            self.driver = uc.Chrome(version_main=148, options=options)
-            self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
-            logger.info("Инициализирован ChromeDriver для PassMark (версия 148)")
+        if self.driver is not None:
+            return self.driver
+
+        options = uc.ChromeOptions()
+        options.page_load_strategy = 'eager'
+        if self.headless:
+            options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        self.driver = uc.Chrome(version_main=148, options=options)
+        self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
+        time.sleep(5)
+        self.driver.switch_to.window(self.driver.current_window_handle)
+        logger.info("Инициализирован ChromeDriver для PassMark (версия 148)")
         return self.driver
 
     def _search_cpu(self, model_name: str) -> Optional[float]:
@@ -41,7 +45,7 @@ class PassMarkParser:
         driver.get(mega_page_url)
 
         try:
-            search_input = WebDriverWait(driver, 15).until(
+            search_input = WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input#search_name"))
             )
         except Exception as e:
@@ -50,10 +54,10 @@ class PassMarkParser:
 
         search_input.clear()
         search_input.send_keys(model_name)
-        time.sleep(random.uniform(1.5, 3.0))
+        time.sleep(random.uniform(5, 10))
 
         try:
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#cputable tbody tr"))
             )
         except Exception as e:
@@ -61,12 +65,34 @@ class PassMarkParser:
             return None
 
         soup = BeautifulSoup(driver.page_source, 'lxml')
-        first_row = soup.select_one("#cputable tbody tr")
-        if not first_row:
+        rows = soup.select("#cputable tbody tr")
+        if not rows:
             logger.debug(f"Нет строк в таблице для CPU {model_name}")
             return None
 
-        columns = first_row.find_all("td")
+        # Ищем строку, где название совпадает с model_name (или частично)
+        target_row = None
+        for row in rows:
+            name_cell = row.select_one("td:nth-child(2)")  # второй столбец — название CPU
+            if name_cell:
+                name = name_cell.get_text(strip=True)
+                if name.lower() == model_name.lower():
+                    target_row = row
+                    break
+        if not target_row:
+            # если точного совпадения нет, ищем частичное (модель входит в название)
+            for row in rows:
+                name_cell = row.select_one("td:nth-child(2)")
+                if name_cell:
+                    name = name_cell.get_text(strip=True)
+                    if model_name.lower() in name.lower():
+                        target_row = row
+                        break
+        if not target_row:
+            logger.debug(f"Не найдена строка для CPU {model_name}")
+            return None
+
+        columns = target_row.find_all("td")
         if len(columns) < 4:
             logger.debug(f"Недостаточно колонок в таблице для CPU {model_name}")
             return None
@@ -85,7 +111,7 @@ class PassMarkParser:
         driver.get(mega_page_url)
 
         try:
-            search_input = WebDriverWait(driver, 15).until(
+            search_input = WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input#search_name"))
             )
         except Exception as e:
@@ -94,23 +120,45 @@ class PassMarkParser:
 
         search_input.clear()
         search_input.send_keys(model_name)
-        time.sleep(random.uniform(1.5, 3.0))
+        time.sleep(random.uniform(5, 10))
 
         try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#gputable tbody tr"))
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#cputable tbody tr"))
             )
         except Exception as e:
             logger.warning(f"Таблица с результатами не загрузилась для GPU {model_name}: {e}")
             return None
 
         soup = BeautifulSoup(driver.page_source, 'lxml')
-        first_row = soup.select_one("#gputable tbody tr")
-        if not first_row:
+        rows = soup.select("#cputable tbody tr")
+        if not rows:
             logger.debug(f"Нет строк в таблице для GPU {model_name}")
             return None
 
-        columns = first_row.find_all("td")
+        # Ищем строку, где название совпадает с search_name (или частично)
+        target_row = None
+        for row in rows:
+            name_cell = row.select_one("td:nth-child(2)")  # второй столбец — название GPU
+            if name_cell:
+                name = name_cell.get_text(strip=True)
+                if name.lower() == model_name.lower():
+                    target_row = row
+                    break
+        if not target_row:
+            # частичное совпадение
+            for row in rows:
+                name_cell = row.select_one("td:nth-child(2)")
+                if name_cell:
+                    name = name_cell.get_text(strip=True)
+                    if model_name.lower() in name.lower():
+                        target_row = row
+                        break
+        if not target_row:
+            logger.debug(f"Не найдена строка для GPU {model_name}")
+            return None
+
+        columns = target_row.find_all("td")
         if len(columns) < 3:
             logger.debug(f"Недостаточно колонок в таблице для GPU {model_name}")
             return None
