@@ -347,13 +347,12 @@ elif selected_page == "Подбор CPU/GPU":
     # Подбор GPU под выбранный CPU
     with sub_tab1:
         st.subheader("Выберите CPU, чтобы увидеть рекомендуемые GPU")
-        # Получаем все CPU с актуальными скорами
         cpu_type = db.query(ProductType).filter_by(name="CPU").first()
         gpu_type = db.query(ProductType).filter_by(name="GPU").first()
         if not cpu_type or not gpu_type:
             st.warning("Нет данных о CPU или GPU")
         else:
-            # Получаем модели CPU (уникальные) с последним скором
+            # Получаем модели CPU с последним скором
             cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
             cpu_list = []
             for model in cpu_models:
@@ -363,47 +362,52 @@ elif selected_page == "Подбор CPU/GPU":
             if not cpu_list:
                 st.info("Нет CPU с баллами PassMark")
             else:
-                selected_cpu_name = st.selectbox("Выберите CPU", [c[1] for c in cpu_list])
+                selected_cpu_name = st.selectbox("Выберите CPU", [c[1] for c in cpu_list], key="cpu_select")
                 selected_cpu = next(c for c in cpu_list if c[1] == selected_cpu_name)
                 target_gpu_score = selected_cpu[2] * 1.5
                 st.info(f"Целевой балл GPU: {target_gpu_score:.0f}")
                 
-                # Получаем все GPU с последними скорами и ценами
+                # Получаем все GPU с баллами, ценами и Benefit
                 gpu_models = db.query(Model).filter_by(type_id=gpu_type.id).all()
                 gpu_data = []
                 for model in gpu_models:
                     score = get_last_score(model.id)
                     if not score:
                         continue
-                    # Берём один продукт этой модели (можно среднюю цену, но возьмём первый)
                     product = db.query(Product).filter_by(model_id=model.id).first()
                     price = get_last_price(product.id) if product else None
                     benefit = get_last_benefit(product.id) if product else None
                     gpu_data.append({
                         "Model Name": model.name,
                         "Score": score,
-                        "Price (RUB)": price if price else "N/A",
-                        "Benefit": benefit if benefit else "N/A",
-                        "Deviation": abs(score - target_gpu_score) / target_gpu_score
+                        "Price (RUB)": price if price is not None else 0,
+                        "Benefit": benefit if benefit is not None else 0,
+                        "Deviation": abs(score - target_gpu_score) / target_gpu_score if target_gpu_score > 0 else 999
                     })
                 df_gpu = pd.DataFrame(gpu_data)
-                if not df_gpu.empty and 'Benefit' in df_gpu.columns:
+                if not df_gpu.empty:
+                    # Вычисляем процент Benefit относительно максимального в таблице
                     max_benefit = df_gpu['Benefit'].max()
-                    if max_benefit and max_benefit > 0:
+                    if max_benefit > 0:
                         df_gpu['Benefit %'] = (df_gpu['Benefit'] / max_benefit * 100).round(1)
                     else:
                         df_gpu['Benefit %'] = 0
-                # Сортируем по отклонению
-                df_gpu = df_gpu.sort_values(by="Deviation")
-                df_gpu["Match"] = df_gpu["Deviation"].apply(lambda x: "⭐ Оптимально" if x < 0.2 else "👍 Хорошо" if x < 0.4 else "⚠️ Слабоват" if x > 0.6 else "👌 Приемлемо")
-                st.dataframe(df_gpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
-
+                    # Сортируем по отклонению (чем меньше, тем лучше)
+                    df_gpu = df_gpu.sort_values(by="Deviation")
+                    df_gpu["Match"] = df_gpu["Deviation"].apply(
+                        lambda x: "⭐ Оптимально" if x < 0.2 else "👍 Хорошо" if x < 0.4 else "⚠️ Слабоват" if x > 0.6 else "👌 Приемлемо"
+                    )
+                    st.dataframe(df_gpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
+    
     # Подбор CPU под выбранный GPU
     with sub_tab2:
         st.subheader("Выберите GPU, чтобы увидеть рекомендуемые CPU")
+        gpu_type = db.query(ProductType).filter_by(name="GPU").first()
+        cpu_type = db.query(ProductType).filter_by(name="CPU").first()
         if not gpu_type or not cpu_type:
             st.warning("Нет данных о GPU или CPU")
         else:
+            # Получаем модели GPU с последним скором
             gpu_models = db.query(Model).filter_by(type_id=gpu_type.id).all()
             gpu_list = []
             for model in gpu_models:
@@ -413,11 +417,12 @@ elif selected_page == "Подбор CPU/GPU":
             if not gpu_list:
                 st.info("Нет GPU с баллами PassMark")
             else:
-                selected_gpu_name = st.selectbox("Выберите GPU", [g[1] for g in gpu_list])
+                selected_gpu_name = st.selectbox("Выберите GPU", [g[1] for g in gpu_list], key="gpu_select")
                 selected_gpu = next(g for g in gpu_list if g[1] == selected_gpu_name)
                 target_cpu_score = selected_gpu[2] / 1.5
                 st.info(f"Целевой балл CPU: {target_cpu_score:.0f}")
                 
+                # Получаем все CPU с баллами, ценами и Benefit
                 cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
                 cpu_data = []
                 for model in cpu_models:
@@ -430,20 +435,22 @@ elif selected_page == "Подбор CPU/GPU":
                     cpu_data.append({
                         "Model Name": model.name,
                         "Score": score,
-                        "Price (RUB)": price if price else "N/A",
-                        "Benefit": benefit if benefit else "N/A",
-                        "Deviation": abs(score - target_cpu_score) / target_cpu_score
+                        "Price (RUB)": price if price is not None else 0,
+                        "Benefit": benefit if benefit is not None else 0,
+                        "Deviation": abs(score - target_cpu_score) / target_cpu_score if target_cpu_score > 0 else 999
                     })
-                df_cpu = pd.DataFrame(cpu_data).sort_values(by="Deviation")
-                if not df_cpu.empty and 'Benefit' in df_cpu.columns:
+                df_cpu = pd.DataFrame(cpu_data)
+                if not df_cpu.empty:
                     max_benefit = df_cpu['Benefit'].max()
-                    if max_benefit and max_benefit > 0:
+                    if max_benefit > 0:
                         df_cpu['Benefit %'] = (df_cpu['Benefit'] / max_benefit * 100).round(1)
                     else:
                         df_cpu['Benefit %'] = 0
-                df_cpu = df_cpu.sort_values(by="Deviation")
-                df_cpu["Match"] = df_cpu["Deviation"].apply(lambda x: "⭐ Оптимально" if x < 0.2 else "👍 Хорошо" if x < 0.4 else "⚠️ Слабоват" if x > 0.6 else "👌 Приемлемо")
-                st.dataframe(df_cpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
+                    df_cpu = df_cpu.sort_values(by="Deviation")
+                    df_cpu["Match"] = df_cpu["Deviation"].apply(
+                        lambda x: "⭐ Оптимально" if x < 0.2 else "👍 Хорошо" if x < 0.4 else "⚠️ Слабоват" if x > 0.6 else "👌 Приемлемо"
+                    )
+                    st.dataframe(df_cpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
 
 # ===========================
 # 5. Тепловые карты (все модели)
