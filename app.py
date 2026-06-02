@@ -453,19 +453,20 @@ elif selected_page == "Подбор CPU/GPU":
                     st.dataframe(df_cpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
 
 # ===========================
-# 5. Тепловые карты (все модели)
+# 5. Тепловые карты (обе – на основе чипов GPU из attribute_values)
 # ===========================
 elif selected_page == "Тепловые карты":
     heat_tab1, heat_tab2 = st.tabs(["Benefit CPU+GPU", "Оптимальные CPU+GPU"])
-    
-    # Получаем все модели CPU и GPU с их последними баллами и Benefit (для любого продукта этой модели)
-    def get_all_models_data():
+
+    # ------------------------------------------------------------------
+    # Вспомогательные функции
+    # ------------------------------------------------------------------
+    def get_cpu_models_data():
+        """Возвращает список CPU-моделей с их скором и Benefit (число)."""
         cpu_type = db.query(ProductType).filter_by(name="CPU").first()
-        gpu_type = db.query(ProductType).filter_by(name="GPU").first()
-        if not cpu_type or not gpu_type:
-            return [], []
+        if not cpu_type:
+            return []
         cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
-        gpu_models = db.query(Model).filter_by(type_id=gpu_type.id).all()
         cpu_data = []
         for model in cpu_models:
             score = get_last_score(model.id)
@@ -473,79 +474,158 @@ elif selected_page == "Тепловые карты":
                 continue
             product = db.query(Product).filter_by(model_id=model.id).first()
             benefit = get_last_benefit(product.id) if product else None
+            if benefit is None:
+                benefit = 0.0
             cpu_data.append({
-                "id": model.id,
                 "name": model.name,
                 "score": score,
-                "benefit": benefit if benefit else 0
+                "benefit": benefit
             })
-        gpu_data = []
-        for model in gpu_models:
-            score = get_last_score(model.id)
-            if score is None:
-                continue
-            product = db.query(Product).filter_by(model_id=model.id).first()
-            benefit = get_last_benefit(product.id) if product else None
-            gpu_data.append({
-                "id": model.id,
-                "name": model.name,
-                "score": score,
-                "benefit": benefit if benefit else 0
-            })
-        # Сортировка по убыванию баллов
         cpu_data.sort(key=lambda x: x["score"], reverse=True)
-        gpu_data.sort(key=lambda x: x["score"], reverse=True)
-        return cpu_data, gpu_data
-    
+        return cpu_data
+
+    def get_gpu_raw_values_data():
+        """Возвращает список уникальных raw_value атрибута 'Графический процессор'
+           с максимальным скором и максимальным Benefit (число)."""
+        gpu_attr = db.query(Attribute).filter_by(name="Графический процессор").first()
+        if not gpu_attr:
+            return []
+
+        raw_values = db.query(AttributeValue.raw_value).filter_by(attribute_id=gpu_attr.id).distinct().all()
+        raw_values = [rv[0] for rv in raw_values if rv[0]]
+
+        result = []
+        for raw_val in raw_values:
+            product_ids = db.query(AttributeValue.product_id).filter(
+                AttributeValue.attribute_id == gpu_attr.id,
+                AttributeValue.raw_value == raw_val
+            ).distinct().all()
+            product_ids = [pid[0] for pid in product_ids]
+            if not product_ids:
+                continue
+
+            model_ids = db.query(Product.model_id).filter(
+                Product.id.in_(product_ids),
+                Product.model_id.isnot(None)
+            ).distinct().all()
+            model_ids = [mid[0] for mid in model_ids]
+
+            best_score = None
+            for mid in model_ids:
+                ms = db.query(ModelScore).filter_by(model_id=mid).order_by(ModelScore.updated_at.desc()).first()
+                if ms and ms.score is not None and (best_score is None or ms.score > best_score):
+                    best_score = ms.score
+
+            if best_score is None:
+                continue
+
+            best_benefit = 0.0
+            for pid in product_ids:
+                bh = db.query(BenefitHistory).filter_by(product_id=pid).order_by(BenefitHistory.timestamp.desc()).first()
+                if bh and bh.benefit is not None and bh.benefit > best_benefit:
+                    best_benefit = bh.benefit
+
+            result.append({
+                "name": raw_val,
+                "score": best_score,
+                "benefit": best_benefit
+            })
+
+        result.sort(key=lambda x: x["score"], reverse=True)
+        return result
+
+    # ------------------------------------------------------------------
+    # Построение тепловых карт
+    # ------------------------------------------------------------------
     @st.cache_data(ttl=3600)
-    def compute_heatmap_data():
-        cpus, gpus = get_all_models_data()
+    def compute_heatmap_benefit():
+        cpus = get_cpu_models_data()
+        gpus = get_gpu_raw_values_data()
         if not cpus or not gpus:
-            return None, None, None, None  # 4 значения вместо 3
+            return None, None, None
+
         cpu_names = [c["name"] for c in cpus]
         gpu_names = [g["name"] for g in gpus]
-        benefit_matrix = []
-        optimal_matrix = []
+        matrix = []
         for cpu in cpus:
-            benefit_row = []
-            optimal_row = []
+            row = []
+            cpu_ben = cpu.get("benefit", 0.0) or 0.0
             for gpu in gpus:
-                avg_benefit = (cpu["benefit"] + gpu["benefit"]) / 2 if cpu["benefit"] and gpu["benefit"] else 0
-                benefit_row.append(avg_benefit)
-                target = cpu["score"] * 1.5
-                if target == 0:
-                    deviation = 0
+                gpu_ben = gpu.get("benefit", 0.0) or 0.0
+                product = cpu_ben * gpu_ben
+                if product >= 0:
+                    result = (product) ** 0.5   # sqrt(benefit_cpu * benefit_gpu)
                 else:
-                    deviation = min(gpu["score"], target) / max(gpu["score"], target)
-                optimal_value = avg_benefit * deviation
-                optimal_row.append(optimal_value)
-            benefit_matrix.append(benefit_row)
-            optimal_matrix.append(optimal_row)
-        return cpu_names, gpu_names, benefit_matrix, optimal_matrix
+                    result = 0.0
+                row.append(result)
+            matrix.append(row)
+        return cpu_names, gpu_names, matrix
 
-    # Вызов и проверка
-    cpu_names, gpu_names, benefit_mat, optimal_mat = compute_heatmap_data()
-    if cpu_names is None or gpu_names is None:
-        st.warning("Недостаточно данных для построения тепловых карт. Убедитесь, что у моделей есть скоры и Benefit.")
-    else:
-        with heat_tab1:
-            fig = px.imshow(benefit_mat,
-                            x=gpu_names,
-                            y=cpu_names,
-                            labels=dict(x="GPU", y="CPU", color="Средний Benefit"),
-                            title="Тепловая карта среднего Benefit (CPU × GPU)",
-                            color_continuous_scale="Viridis",
-                            aspect="auto",
-                            height=800)
+    @st.cache_data(ttl=3600)
+    def compute_heatmap_optimal():
+        cpus = get_cpu_models_data()
+        gpus_raw = get_gpu_raw_values_data()
+        if not cpus or not gpus_raw:
+            return None, None, None
+
+        cpu_names = [c["name"] for c in cpus]
+        gpu_names = [g["name"] for g in gpus_raw]
+        matrix = []
+        for cpu in cpus:
+            row = []
+            cpu_score = cpu["score"]
+            if cpu_score is None or cpu_score <= 0:
+                # Нет скора CPU – все значения inf (на карте белый)
+                row = [float('inf')] * len(gpus_raw)
+                matrix.append(row)
+                continue
+            target = cpu_score * 1.25
+            for gpu in gpus_raw:
+                gpu_score = gpu["score"]
+                if gpu_score is None:
+                    optimal_value = float('inf')
+                else:
+                    diff = abs(target - gpu_score)
+                    if diff == 0:
+                        optimal_value = float('inf')
+                    else:
+                        optimal_value = (1.0 / diff) ** 0.5   # sqrt(1 / diff)
+                row.append(optimal_value)
+            matrix.append(row)
+        return cpu_names, gpu_names, matrix
+
+    # --- Первая вкладка: Benefit (чипы GPU) ---
+    with heat_tab1:
+        cpu_names, gpu_names, benefit_mat = compute_heatmap_benefit()
+        if cpu_names is None or gpu_names is None:
+            st.warning("Недостаточно данных для тепловой карты Benefit. Запустите парсинг DNS и PassMark для CPU/GPU.")
+        else:
+            fig = px.imshow(
+                benefit_mat,
+                x=gpu_names,
+                y=cpu_names,
+                labels=dict(x="GPU (чип)", y="CPU (модель)", color="Benefit (обратный)"),
+                title="Тепловая карта: √(1/(Benefit_CPU × Benefit_GPU))",
+                color_continuous_scale="Viridis",
+                aspect="auto",
+                height=800
+            )
             st.plotly_chart(fig, use_container_width=True)
-        
-        with heat_tab2:
-            fig2 = px.imshow(optimal_mat,
-                            x=gpu_names,
-                            y=cpu_names,
-                            labels=dict(x="GPU", y="CPU", color="Оптимальность"),
-                            title="Тепловая карта оптимальности пар CPU–GPU (с учётом целевого балла)",
-                            color_continuous_scale="Plasma",
-                            aspect="auto",
-                            height=800)
+
+    # --- Вторая вкладка: Оптимальность (чипы GPU) ---
+    with heat_tab2:
+        cpu_names, gpu_names, optimal_mat = compute_heatmap_optimal()
+        if cpu_names is None or gpu_names is None:
+            st.warning("Недостаточно данных для тепловой карты оптимальности. Убедитесь, что у видеокарт заполнен атрибут 'Графический процессор' и есть скоры PassMark.")
+        else:
+            fig2 = px.imshow(
+                optimal_mat,
+                x=gpu_names,
+                y=cpu_names,
+                labels=dict(x="GPU (чип)", y="CPU (модель)", color="Оптимальность"),
+                title="Тепловая карта: 1/|Score_CPU×1.25 - Score_GPU|",
+                color_continuous_scale="Plasma",
+                aspect="auto",
+                height=800
+            )
             st.plotly_chart(fig2, use_container_width=True)
