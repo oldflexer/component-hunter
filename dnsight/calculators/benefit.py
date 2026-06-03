@@ -19,7 +19,7 @@ def get_last_price(product_id: int, db: Session) -> Optional[float]:
 
 def calculate_benefit(score: float, price: float) -> float:
     if price > 0 and score:
-        return score / (price * price)
+        return score / price
     return 0.0
 
 def update_benefit_for_product(product: Product, db: Session) -> None:

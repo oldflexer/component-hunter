@@ -8,6 +8,7 @@ import time
 import plotly.express as px
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_
+from typing import Optional
 
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
@@ -87,15 +88,15 @@ def run_full_update():
 # --- Боковая панель ---
 with st.sidebar:
     st.header("Управление")
-    if st.button("🔄 Полный цикл", use_container_width=True):
+    if st.button("🔄 Полный цикл", width='stretch'):
         with st.spinner("Полный цикл..."):
             run_full_update()
         st.rerun()
-    if st.button("🔸 Только DNS", use_container_width=True):
+    if st.button("🔸 Только DNS", width='stretch'):
         with st.spinner("Парсинг DNS..."):
             run_dns_parsing()
         st.rerun()
-    if st.button("🔥 Только PassMark", use_container_width=True):
+    if st.button("🔥 Только PassMark", width='stretch'):
         with st.spinner("Обновление баллов PassMark..."):
             run_passmark_update()
         st.rerun()
@@ -103,7 +104,7 @@ with st.sidebar:
     
     selected_page = st.selectbox(
         "Выберите раздел",
-        ["Таблицы", "Диагностика", "Графики", "Подбор CPU/GPU", "Тепловые карты"]
+        ["Таблицы", "Диагностика", "Графики", "Аналитика", "Подбор CPU/GPU", "Тепловые карты"]
     )
 
 # --- Общие вспомогательные функции ---
@@ -123,149 +124,261 @@ def get_last_benefit(product_id: int):
     return bh.benefit if bh else None
 
 # ===========================
-# 1. Таблицы (без изменений)
+# 1. Таблицы с data_editor (удаление через чекбоксы в таблице)
 # ===========================
 if selected_page == "Таблицы":
+    
+    def render_table_with_data_editor(table_name: str, query, id_column: str, display_columns: list, column_names: list = None):
+        """Отображает таблицу с колонкой чекбоксов (первая колонка, без заголовка) для удаления."""
+        data = query.all()
+        if not data:
+            st.info(f"Нет данных в таблице {table_name}.")
+            return
+
+        # Создаём список словарей для DataFrame
+        rows = []
+        for row in data:
+            row_dict = {}
+            for col in display_columns:
+                if isinstance(col, str):
+                    val = getattr(row, col)
+                else:
+                    val = col
+                row_dict[col if isinstance(col, str) else str(col)] = val
+            rows.append(row_dict)
+
+        df = pd.DataFrame(rows)
+        if column_names:
+            df.columns = column_names
+
+        # Добавляем колонку для удаления (без названия)
+        delete_col = "🗑️ Удалить?"
+        df.insert(0, delete_col, False)   # вставляем первой
+
+        # Настройка ширины колонок: для удаления делаем узкую
+        column_config = {
+            delete_col: st.column_config.CheckboxColumn(
+                label="",   # пустой заголовок
+                width=30,
+                default=False
+            ),
+        }
+        # Остальные колонки можно оставить с автошириной
+
+        # Отображаем data_editor
+        edited_df = st.data_editor(
+            df,
+            column_config=column_config,
+            width='stretch',
+            hide_index=True,
+            key=f"data_editor_{table_name}"
+        )
+
+        if st.button(f"🗑️ Удалить отмеченные", key=f"del_selected_{table_name}"):
+                to_delete_mask = edited_df[delete_col] == True
+                if to_delete_mask.any():
+                    # Определяем имя колонки с ID (обычно первая после колонки удаления)
+                    id_col_name = df.columns[1]   # вторая колонка (после delete_col)
+                    ids_to_delete = edited_df.loc[to_delete_mask, id_col_name].tolist()
+                    confirm = st.checkbox(f"Подтвердить удаление {len(ids_to_delete)} записей?", key=f"confirm_{table_name}")
+                    if confirm:
+                        try:
+                            model_class = query.column_descriptions[0]['type']
+                            query.filter(getattr(model_class, id_column).in_(ids_to_delete)).delete(synchronize_session=False)
+                            db.commit()
+                            st.success(f"Удалено {len(ids_to_delete)} записей.")
+                            st.rerun()
+                        except Exception as e:
+                            db.rollback()
+                            st.error(f"Ошибка удаления: {e}. Возможно, есть связанные записи.")
+                else:
+                    st.info("Нет выбранных записей для удаления.")
+    
+    # Создаём вкладки для каждой таблицы
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
         ["product_types", "models", "model_scores", "products",
          "attributes", "attribute_values", "price_history", "benefit_history"]
     )
+    
     with tab1:
-        st.subheader("Типы продуктов (product_types)")
-        data = db.query(ProductType).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.name, r.description) for r in data],
-                              columns=["id", "name", "description"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных.")
+        render_table_with_data_editor(
+            "product_types",
+            db.query(ProductType),
+            "id",
+            ["id", "name", "description"],
+            ["id", "name", "description"]
+        )
+    
     with tab2:
-        st.subheader("Модели (models)")
-        data = db.query(Model).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.name, r.type_id) for r in data],
-                              columns=["id", "name", "type_id"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных. Запустите парсинг DNS.")
+        render_table_with_data_editor(
+            "models",
+            db.query(Model),
+            "id",
+            ["id", "name", "type_id"],
+            ["id", "name", "type_id"]
+        )
+    
     with tab3:
-        st.subheader("Скоры моделей (model_scores)")
-        data = db.query(ModelScore).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.model_id, r.score, r.source, r.updated_at) for r in data],
-                              columns=["id", "model_id", "score", "source", "updated_at"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных. Запустите обновление PassMark.")
+        render_table_with_data_editor(
+            "model_scores",
+            db.query(ModelScore),
+            "id",
+            ["id", "model_id", "score", "source", "updated_at"],
+            ["id", "model_id", "score", "source", "updated_at"]
+        )
+    
     with tab4:
-        st.subheader("Продукты (products)")
-        data = db.query(Product).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.type_id, r.model_id, r.name, r.url, r.created_at, r.updated_at) for r in data],
-                              columns=["id", "type_id", "model_id", "name", "url", "created_at", "updated_at"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных. Запустите парсинг DNS.")
+        render_table_with_data_editor(
+            "products",
+            db.query(Product),
+            "id",
+            ["id", "type_id", "model_id", "name", "url", "created_at", "updated_at"],
+            ["id", "type_id", "model_id", "name", "url", "created_at", "updated_at"]
+        )
+    
     with tab5:
-        st.subheader("Атрибуты (attributes)")
-        data = db.query(Attribute).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.name, r.type_id) for r in data],
-                              columns=["id", "name", "type_id"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных.")
+        render_table_with_data_editor(
+            "attributes",
+            db.query(Attribute),
+            "id",
+            ["id", "name", "type_id"],
+            ["id", "name", "type_id"]
+        )
+    
     with tab6:
-        st.subheader("Значения атрибутов (attribute_values)")
-        data = db.query(AttributeValue).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.product_id, r.attribute_id, r.raw_value, r.updated_at) for r in data],
-                              columns=["id", "product_id", "attribute_id", "raw_value", "updated_at"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных.")
+        render_table_with_data_editor(
+            "attribute_values",
+            db.query(AttributeValue),
+            "id",
+            ["id", "product_id", "attribute_id", "raw_value", "updated_at"],
+            ["id", "product_id", "attribute_id", "raw_value", "updated_at"]
+        )
+    
     with tab7:
-        st.subheader("История цен (price_history)")
-        data = db.query(PriceHistory).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.product_id, r.price, r.timestamp) for r in data],
-                              columns=["id", "product_id", "price", "timestamp"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных о ценах.")
+        render_table_with_data_editor(
+            "price_history",
+            db.query(PriceHistory),
+            "id",
+            ["id", "product_id", "price", "timestamp"],
+            ["id", "product_id", "price", "timestamp"]
+        )
+    
     with tab8:
-        st.subheader("История Benefit (benefit_history)")
-        data = db.query(BenefitHistory).all()
-        if data:
-            df = pd.DataFrame([(r.id, r.product_id, r.benefit, r.timestamp) for r in data],
-                              columns=["id", "product_id", "benefit", "timestamp"])
-            st.dataframe(df, width='stretch')
-        else:
-            st.info("Нет данных о Benefit. Запустите парсинг DNS и PassMark.")
+        render_table_with_data_editor(
+            "benefit_history",
+            db.query(BenefitHistory),
+            "id",
+            ["id", "product_id", "benefit", "timestamp"],
+            ["id", "product_id", "benefit", "timestamp"]
+        )
 
 # ===========================
-# 2. Диагностика (исправлено)
+# 2. Диагностика с возможностью удаления выбранных проблемных товаров
 # ===========================
 elif selected_page == "Диагностика":
     cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
     
-    def get_products_without_attributes(component_type_name: str) -> pd.DataFrame:
-        type_obj = db.query(ProductType).filter_by(name=component_type_name).first()
-        if not type_obj:
-            return pd.DataFrame()
-        products = db.query(Product).filter(
-            Product.type_id == type_obj.id,
-            ~Product.attribute_values.any()
-        ).all()
-        if products:
-            return pd.DataFrame([(p.id, p.name, p.url) for p in products],
-                                columns=["ID", "Name", "URL"])
-        return pd.DataFrame()
-
-    def get_products_without_scores(component_type_name: str) -> pd.DataFrame:
-        type_obj = db.query(ProductType).filter_by(name=component_type_name).first()
-        if not type_obj:
-            return pd.DataFrame()
-        models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
-        products = db.query(Product).filter(
-            Product.type_id == type_obj.id,
-            Product.model_id.isnot(None),
-            Product.model_id.notin_(models_with_scores)
-        ).all()
-        if products:
-            return pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products],
-                                columns=["ID", "Name", "Model Name", "URL"])
-        return pd.DataFrame()
-
+    def render_problem_table(title: str, df: pd.DataFrame, product_ids: list, key_suffix: str):
+        """Отображает таблицу с чекбоксами для удаления выбранных товаров."""
+        if df.empty:
+            st.success(f"✅ {title} – проблем нет!")
+            return
+        
+        st.subheader(title)
+        # Добавляем колонку чекбоксов
+        df_with_check = df.copy()
+        df_with_check.insert(0, "🗑️", False)
+        
+        # Настройка отображения
+        column_config = {
+            "🗑️": st.column_config.CheckboxColumn(label="", width=30, default=False)
+        }
+        edited_df = st.data_editor(
+            df_with_check,
+            column_config=column_config,
+            width='stretch',
+            hide_index=True,
+            key=f"diagnostic_{key_suffix}"
+        )
+        
+        # Кнопка удаления выбранных
+        if st.button(f"🗑️ Удалить выбранные товары", key=f"del_selected_{key_suffix}"):
+            selected_mask = edited_df["🗑️"] == True
+            if selected_mask.any():
+                # Получаем ID из колонки "ID" (первая после чекбоксов)
+                ids_to_delete = edited_df.loc[selected_mask, df.columns[0]].tolist()
+                confirm = st.checkbox(f"Подтвердить удаление {len(ids_to_delete)} товаров?", key=f"confirm_{key_suffix}")
+                if confirm:
+                    try:
+                        db.query(Product).filter(Product.id.in_(ids_to_delete)).delete(synchronize_session=False)
+                        db.commit()
+                        st.success(f"Удалено {len(ids_to_delete)} товаров.")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Ошибка удаления: {e}")
+            else:
+                st.info("Нет выбранных товаров.")
+    
+    # --- CPU ---
     with cpu_tab:
-        st.subheader("CPU – без характеристик")
-        df_no_attrs = get_products_without_attributes("CPU")
-        if not df_no_attrs.empty:
-            st.dataframe(df_no_attrs, width='stretch')
-        else:
-            st.success("✅ Все CPU имеют характеристики. Проблем нет!")
+        # Товары без характеристик
+        type_cpu = db.query(ProductType).filter_by(name="CPU").first()
+        if type_cpu:
+            products_no_attrs = db.query(Product).filter(
+                Product.type_id == type_cpu.id,
+                ~Product.attribute_values.any()
+            ).all()
+            if products_no_attrs:
+                df_no_attrs = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs],
+                                           columns=["ID", "Name", "URL"])
+                render_problem_table("CPU – без характеристик", df_no_attrs, [p.id for p in products_no_attrs], "cpu_no_attrs")
+            else:
+                st.success("✅ CPU – без характеристик: проблем нет!")
         
-        st.subheader("CPU – без баллов PassMark")
-        df_no_scores = get_products_without_scores("CPU")
-        if not df_no_scores.empty:
-            st.dataframe(df_no_scores, width='stretch')
-        else:
-            st.success("✅ Все CPU имеют баллы PassMark. Проблем нет!")
-
+        # Товары без баллов PassMark
+        if type_cpu:
+            models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
+            products_no_scores = db.query(Product).filter(
+                Product.type_id == type_cpu.id,
+                Product.model_id.isnot(None),
+                Product.model_id.notin_(models_with_scores)
+            ).all()
+            if products_no_scores:
+                df_no_scores = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products_no_scores],
+                                            columns=["ID", "Name", "Model Name", "URL"])
+                render_problem_table("CPU – без баллов PassMark", df_no_scores, [p.id for p in products_no_scores], "cpu_no_scores")
+            else:
+                st.success("✅ CPU – без баллов PassMark: проблем нет!")
+    
+    # --- GPU ---
     with gpu_tab:
-        st.subheader("GPU – без характеристик")
-        df_no_attrs = get_products_without_attributes("GPU")
-        if not df_no_attrs.empty:
-            st.dataframe(df_no_attrs, width='stretch')
-        else:
-            st.success("✅ Все GPU имеют характеристики. Проблем нет!")
+        type_gpu = db.query(ProductType).filter_by(name="GPU").first()
+        if type_gpu:
+            products_no_attrs = db.query(Product).filter(
+                Product.type_id == type_gpu.id,
+                ~Product.attribute_values.any()
+            ).all()
+            if products_no_attrs:
+                df_no_attrs = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs],
+                                           columns=["ID", "Name", "URL"])
+                render_problem_table("GPU – без характеристик", df_no_attrs, [p.id for p in products_no_attrs], "gpu_no_attrs")
+            else:
+                st.success("✅ GPU – без характеристик: проблем нет!")
         
-        st.subheader("GPU – без баллов PassMark")
-        df_no_scores = get_products_without_scores("GPU")
-        if not df_no_scores.empty:
-            st.dataframe(df_no_scores, width='stretch')
-        else:
-            st.success("✅ Все GPU имеют баллы PassMark. Проблем нет!")
+        if type_gpu:
+            models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
+            products_no_scores = db.query(Product).filter(
+                Product.type_id == type_gpu.id,
+                Product.model_id.isnot(None),
+                Product.model_id.notin_(models_with_scores)
+            ).all()
+            if products_no_scores:
+                df_no_scores = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products_no_scores],
+                                            columns=["ID", "Name", "Model Name", "URL"])
+                render_problem_table("GPU – без баллов PassMark", df_no_scores, [p.id for p in products_no_scores], "gpu_no_scores")
+            else:
+                st.success("✅ GPU – без баллов PassMark: проблем нет!")
 
 # ===========================
 # 3. Графики (последние 30 дней)
@@ -317,19 +430,19 @@ elif selected_page == "Графики":
         with col1:
             if not df_price.empty:
                 fig_price = px.line(df_price, x="date", y="price", title="Цена", labels={"price": "₽"})
-                st.plotly_chart(fig_price, use_container_width=True)
+                st.plotly_chart(fig_price, width='stretch')
             else:
                 st.info("Нет данных о ценах за последние 30 дней")
         with col2:
             if not df_score.empty:
                 fig_score = px.line(df_score, x="date", y="score", title="PassMark Score", labels={"score": "баллы"})
-                st.plotly_chart(fig_score, use_container_width=True)
+                st.plotly_chart(fig_score, width='stretch')
             else:
                 st.info("Нет данных о скорах за последние 30 дней")
         with col3:
             if not df_benefit.empty:
                 fig_benefit = px.line(df_benefit, x="date", y="benefit", title="Benefit", labels={"benefit": "Benefit"})
-                st.plotly_chart(fig_benefit, use_container_width=True)
+                st.plotly_chart(fig_benefit, width='stretch')
             else:
                 st.info("Нет данных о Benefit за последние 30 дней")
     
@@ -339,7 +452,99 @@ elif selected_page == "Графики":
         plot_product_history("GPU")
 
 # ===========================
-# 4. Подбор CPU/GPU
+# 4. Аналитика (средние по дням)
+# ===========================
+elif selected_page == "Аналитика":
+    cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
+
+    def get_type_id(component_type: str) -> Optional[int]:
+        pt = db.query(ProductType).filter_by(name=component_type).first()
+        return pt.id if pt else None
+
+    def get_daily_averages(component_type: str):
+        type_id = get_type_id(component_type)
+        if type_id is None:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # Получаем все продукты данного типа
+        products = db.query(Product).filter_by(type_id=type_id).all()
+        product_ids = [p.id for p in products]
+        if not product_ids:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # --- Средняя цена ---
+        prices = db.query(PriceHistory).filter(PriceHistory.product_id.in_(product_ids)).all()
+        df_price = pd.DataFrame([(p.timestamp.date(), p.price) for p in prices], columns=["date", "price"])
+        if not df_price.empty:
+            avg_price = df_price.groupby("date")["price"].mean().reset_index()
+            avg_price.columns = ["date", "avg_price"]
+        else:
+            avg_price = pd.DataFrame(columns=["date", "avg_price"])
+
+        # --- Средний балл PassMark ---
+        # Собираем model_id всех продуктов
+        model_ids = [p.model_id for p in products if p.model_id is not None]
+        scores = db.query(ModelScore).filter(ModelScore.model_id.in_(model_ids)).all()
+        df_score = pd.DataFrame([(s.updated_at.date(), s.score) for s in scores], columns=["date", "score"])
+        if not df_score.empty:
+            avg_score = df_score.groupby("date")["score"].mean().reset_index()
+            avg_score.columns = ["date", "avg_score"]
+        else:
+            avg_score = pd.DataFrame(columns=["date", "avg_score"])
+
+        # --- Средний Benefit ---
+        benefits = db.query(BenefitHistory).filter(BenefitHistory.product_id.in_(product_ids)).all()
+        df_benefit = pd.DataFrame([(b.timestamp.date(), b.benefit) for b in benefits], columns=["date", "benefit"])
+        if not df_benefit.empty:
+            avg_benefit = df_benefit.groupby("date")["benefit"].mean().reset_index()
+            avg_benefit.columns = ["date", "avg_benefit"]
+        else:
+            avg_benefit = pd.DataFrame(columns=["date", "avg_benefit"])
+
+        return avg_price, avg_score, avg_benefit
+
+    def plot_trends(component_type: str):
+        avg_price, avg_score, avg_benefit = get_daily_averages(component_type)
+        if avg_price.empty and avg_score.empty and avg_benefit.empty:
+            st.info(f"Нет данных для {component_type}")
+            return
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if not avg_price.empty:
+                fig_price = px.line(avg_price, x="date", y="avg_price",
+                                    title=f"Средняя цена {component_type}",
+                                    labels={"avg_price": "₽", "date": "Дата"})
+                st.plotly_chart(fig_price, width='stretch')
+            else:
+                st.info("Нет данных о ценах")
+
+        with col2:
+            if not avg_score.empty:
+                fig_score = px.line(avg_score, x="date", y="avg_score",
+                                    title=f"Средний балл PassMark {component_type}",
+                                    labels={"avg_score": "баллы", "date": "Дата"})
+                st.plotly_chart(fig_score, width='stretch')
+            else:
+                st.info("Нет данных о скорах")
+
+        with col3:
+            if not avg_benefit.empty:
+                fig_benefit = px.line(avg_benefit, x="date", y="avg_benefit",
+                                      title=f"Средний Benefit {component_type}",
+                                      labels={"avg_benefit": "Benefit", "date": "Дата"})
+                st.plotly_chart(fig_benefit, width='stretch')
+            else:
+                st.info("Нет данных о Benefit")
+
+    with cpu_tab:
+        plot_trends("CPU")
+    with gpu_tab:
+        plot_trends("GPU")
+
+# ===========================
+# 5. Подбор CPU/GPU
 # ===========================
 elif selected_page == "Подбор CPU/GPU":
     sub_tab1, sub_tab2 = st.tabs(["Подбор GPU под CPU", "Подбор CPU под GPU"])
@@ -364,7 +569,7 @@ elif selected_page == "Подбор CPU/GPU":
             else:
                 selected_cpu_name = st.selectbox("Выберите CPU", [c[1] for c in cpu_list], key="cpu_select")
                 selected_cpu = next(c for c in cpu_list if c[1] == selected_cpu_name)
-                target_gpu_score = selected_cpu[2] * 1.5
+                target_gpu_score = selected_cpu[2] * 1.25
                 st.info(f"Целевой балл GPU: {target_gpu_score:.0f}")
                 
                 # Получаем все GPU с баллами, ценами и Benefit
@@ -419,7 +624,7 @@ elif selected_page == "Подбор CPU/GPU":
             else:
                 selected_gpu_name = st.selectbox("Выберите GPU", [g[1] for g in gpu_list], key="gpu_select")
                 selected_gpu = next(g for g in gpu_list if g[1] == selected_gpu_name)
-                target_cpu_score = selected_gpu[2] / 1.5
+                target_cpu_score = selected_gpu[2] / 1.25
                 st.info(f"Целевой балл CPU: {target_cpu_score:.0f}")
                 
                 # Получаем все CPU с баллами, ценами и Benefit
@@ -453,16 +658,11 @@ elif selected_page == "Подбор CPU/GPU":
                     st.dataframe(df_cpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
 
 # ===========================
-# 5. Тепловые карты (обе – на основе чипов GPU из attribute_values)
+# 6. Тепловые карты (модели + конкретные товары)
 # ===========================
-elif selected_page == "Тепловые карты":
-    heat_tab1, heat_tab2 = st.tabs(["Benefit CPU+GPU", "Оптимальные CPU+GPU"])
-
-    # ------------------------------------------------------------------
-    # Вспомогательные функции
-    # ------------------------------------------------------------------
+elif selected_page == "Тепловые карты":  
+    # Общие вспомогательные функции (модели CPU, чипы GPU)
     def get_cpu_models_data():
-        """Возвращает список CPU-моделей с их скором и Benefit (число)."""
         cpu_type = db.query(ProductType).filter_by(name="CPU").first()
         if not cpu_type:
             return []
@@ -485,15 +685,11 @@ elif selected_page == "Тепловые карты":
         return cpu_data
 
     def get_gpu_raw_values_data():
-        """Возвращает список уникальных raw_value атрибута 'Графический процессор'
-           с максимальным скором и максимальным Benefit (число)."""
         gpu_attr = db.query(Attribute).filter_by(name="Графический процессор").first()
         if not gpu_attr:
             return []
-
         raw_values = db.query(AttributeValue.raw_value).filter_by(attribute_id=gpu_attr.id).distinct().all()
         raw_values = [rv[0] for rv in raw_values if rv[0]]
-
         result = []
         for raw_val in raw_values:
             product_ids = db.query(AttributeValue.product_id).filter(
@@ -503,47 +699,38 @@ elif selected_page == "Тепловые карты":
             product_ids = [pid[0] for pid in product_ids]
             if not product_ids:
                 continue
-
             model_ids = db.query(Product.model_id).filter(
                 Product.id.in_(product_ids),
                 Product.model_id.isnot(None)
             ).distinct().all()
             model_ids = [mid[0] for mid in model_ids]
-
             best_score = None
             for mid in model_ids:
                 ms = db.query(ModelScore).filter_by(model_id=mid).order_by(ModelScore.updated_at.desc()).first()
                 if ms and ms.score is not None and (best_score is None or ms.score > best_score):
                     best_score = ms.score
-
             if best_score is None:
                 continue
-
             best_benefit = 0.0
             for pid in product_ids:
                 bh = db.query(BenefitHistory).filter_by(product_id=pid).order_by(BenefitHistory.timestamp.desc()).first()
                 if bh and bh.benefit is not None and bh.benefit > best_benefit:
                     best_benefit = bh.benefit
-
             result.append({
                 "name": raw_val,
                 "score": best_score,
                 "benefit": best_benefit
             })
-
         result.sort(key=lambda x: x["score"], reverse=True)
         return result
 
-    # ------------------------------------------------------------------
-    # Построение тепловых карт
-    # ------------------------------------------------------------------
+    # --- Матричные вычисления для моделей ---
     @st.cache_data(ttl=3600)
-    def compute_heatmap_benefit():
+    def compute_heatmap_benefit_models():
         cpus = get_cpu_models_data()
         gpus = get_gpu_raw_values_data()
         if not cpus or not gpus:
             return None, None, None
-
         cpu_names = [c["name"] for c in cpus]
         gpu_names = [g["name"] for g in gpus]
         matrix = []
@@ -552,80 +739,85 @@ elif selected_page == "Тепловые карты":
             cpu_ben = cpu.get("benefit", 0.0) or 0.0
             for gpu in gpus:
                 gpu_ben = gpu.get("benefit", 0.0) or 0.0
-                product = cpu_ben * gpu_ben
-                if product >= 0:
-                    result = (product) ** 0.5   # sqrt(benefit_cpu * benefit_gpu)
-                else:
-                    result = 0.0
+                product = (cpu_ben * gpu_ben) ** 0.1
+                result = product if product >= 0 else 0.0
                 row.append(result)
             matrix.append(row)
         return cpu_names, gpu_names, matrix
 
     @st.cache_data(ttl=3600)
-    def compute_heatmap_optimal():
+    def compute_heatmap_optimal_models():
         cpus = get_cpu_models_data()
-        gpus_raw = get_gpu_raw_values_data()
-        if not cpus or not gpus_raw:
+        gpus = get_gpu_raw_values_data()
+        if not cpus or not gpus:
             return None, None, None
-
         cpu_names = [c["name"] for c in cpus]
-        gpu_names = [g["name"] for g in gpus_raw]
+        gpu_names = [g["name"] for g in gpus]
         matrix = []
         for cpu in cpus:
             row = []
             cpu_score = cpu["score"]
             if cpu_score is None or cpu_score <= 0:
-                # Нет скора CPU – все значения inf (на карте белый)
-                row = [float('inf')] * len(gpus_raw)
+                row = [0.0] * len(gpus)
                 matrix.append(row)
                 continue
             target = cpu_score * 1.25
-            for gpu in gpus_raw:
+            for gpu in gpus:
                 gpu_score = gpu["score"]
                 if gpu_score is None:
-                    optimal_value = float('inf')
+                    val = 0.0
                 else:
                     diff = abs(target - gpu_score)
-                    if diff == 0:
-                        optimal_value = float('inf')
-                    else:
-                        optimal_value = (1.0 / diff) ** 0.5   # sqrt(1 / diff)
-                row.append(optimal_value)
+                    val = (1.0 / diff) ** 0.5 if diff != 0 else float('inf')
+                row.append(val)
             matrix.append(row)
         return cpu_names, gpu_names, matrix
 
-    # --- Первая вкладка: Benefit (чипы GPU) ---
-    with heat_tab1:
-        cpu_names, gpu_names, benefit_mat = compute_heatmap_benefit()
-        if cpu_names is None or gpu_names is None:
-            st.warning("Недостаточно данных для тепловой карты Benefit. Запустите парсинг DNS и PassMark для CPU/GPU.")
-        else:
-            fig = px.imshow(
-                benefit_mat,
-                x=gpu_names,
-                y=cpu_names,
-                labels=dict(x="GPU (чип)", y="CPU (модель)", color="Benefit (обратный)"),
-                title="Тепловая карта: √(1/(Benefit_CPU × Benefit_GPU))",
-                color_continuous_scale="Viridis",
-                aspect="auto",
-                height=800
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    @st.cache_data(ttl=3600)
+    def compute_heatmap_combined_models():
+        res_benefit = compute_heatmap_benefit_models()
+        res_optimal = compute_heatmap_optimal_models()
+        if res_benefit[0] is None or res_optimal[0] is None:
+            return None, None, None
+        cpu_names = res_benefit[0]
+        gpu_names = res_benefit[1]
+        benefit_mat = res_benefit[2]
+        optimal_mat = res_optimal[2]
+        combined = [[(benefit_mat[i][j] * optimal_mat[i][j]) ** 0.5 for j in range(len(gpu_names))] for i in range(len(cpu_names))]
+        return cpu_names, gpu_names, combined
 
-    # --- Вторая вкладка: Оптимальность (чипы GPU) ---
-    with heat_tab2:
-        cpu_names, gpu_names, optimal_mat = compute_heatmap_optimal()
-        if cpu_names is None or gpu_names is None:
-            st.warning("Недостаточно данных для тепловой карты оптимальности. Убедитесь, что у видеокарт заполнен атрибут 'Графический процессор' и есть скоры PassMark.")
+    # --- Отрисовка вкладок (модели) ---
+    tab_models1, tab_models2, tab_models3 = st.tabs(["📊 Benefit (модели)", "🎯 Оптимальность (модели)", "🔗 Кривая подбора (модели)"])
+
+    with tab_models1:
+        cpu_names, gpu_names, mat = compute_heatmap_benefit_models()
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Benefit (модели).")
         else:
-            fig2 = px.imshow(
-                optimal_mat,
-                x=gpu_names,
-                y=cpu_names,
-                labels=dict(x="GPU (чип)", y="CPU (модель)", color="Оптимальность"),
-                title="Тепловая карта: 1/|Score_CPU×1.25 - Score_GPU|",
-                color_continuous_scale="Plasma",
-                aspect="auto",
-                height=800
-            )
-            st.plotly_chart(fig2, use_container_width=True)
+            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="√(Benefit)"),
+                            title="Тепловая карта: √(Benefit_CPU × Benefit_GPU)",
+                            color_continuous_scale="Viridis", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    with tab_models2:
+        cpu_names, gpu_names, mat = compute_heatmap_optimal_models()
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Оптимальности (модели).")
+        else:
+            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="√(1/Δ)"),
+                            title="Тепловая карта: √(1/|Score_CPU×1.25 - Score_GPU|)",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    with tab_models3:
+        cpu_names, gpu_names, mat = compute_heatmap_combined_models()
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Кривой подбора (модели).")
+        else:
+            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Произведение"),
+                            title="Тепловая карта: Benefit × Оптимальность",
+                            color_continuous_scale="Viridis", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
