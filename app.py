@@ -7,7 +7,7 @@ import pandas as pd
 import time
 import plotly.express as px
 from datetime import datetime, timedelta
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, select, text
 from typing import Optional
 
 from dnsight.core.database import init_db, get_db
@@ -175,25 +175,25 @@ if selected_page == "Таблицы":
         )
 
         if st.button(f"🗑️ Удалить отмеченные", key=f"del_selected_{table_name}"):
-                to_delete_mask = edited_df[delete_col] == True
-                if to_delete_mask.any():
-                    # Определяем имя колонки с ID (обычно первая после колонки удаления)
-                    id_col_name = df.columns[1]   # вторая колонка (после delete_col)
-                    ids_to_delete = edited_df.loc[to_delete_mask, id_col_name].tolist()
-                    confirm = st.checkbox(f"Подтвердить удаление {len(ids_to_delete)} записей?", key=f"confirm_{table_name}")
-                    if confirm:
-                        try:
-                            model_class = query.column_descriptions[0]['type']
-                            query.filter(getattr(model_class, id_column).in_(ids_to_delete)).delete(synchronize_session=False)
-                            db.commit()
-                            st.success(f"Удалено {len(ids_to_delete)} записей.")
-                            st.rerun()
-                        except Exception as e:
-                            db.rollback()
-                            st.error(f"Ошибка удаления: {e}. Возможно, есть связанные записи.")
-                else:
-                    st.info("Нет выбранных записей для удаления.")
-    
+            to_delete_mask = edited_df[delete_col] == True
+            if to_delete_mask.any():
+                id_col_name = df.columns[1]
+                ids_to_delete = edited_df.loc[to_delete_mask, id_col_name].tolist()
+                confirm = st.checkbox(str(f"Подтвердить удаление {len(ids_to_delete)} записей?"), key=f"confirm_{table_name}")
+                if confirm:
+                    try:
+                        model_class = query.column_descriptions[0]['type']
+                        # Удаляем через ORM с синхронизацией 'fetch'
+                        deleted = query.filter(getattr(model_class, id_column).in_(ids_to_delete)).delete(synchronize_session='fetch')
+                        db.commit()
+                        st.success(f"Удалено {deleted} записей.")
+                        st.rerun()
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"Ошибка удаления: {e}")
+            else:
+                st.info("Нет выбранных записей.")
+
     # Создаём вкладки для каждой таблицы
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
         ["product_types", "models", "model_scores", "products",
@@ -305,14 +305,13 @@ elif selected_page == "Диагностика":
         if st.button(f"🗑️ Удалить выбранные товары", key=f"del_selected_{key_suffix}"):
             selected_mask = edited_df["🗑️"] == True
             if selected_mask.any():
-                # Получаем ID из колонки "ID" (первая после чекбоксов)
                 ids_to_delete = edited_df.loc[selected_mask, df.columns[0]].tolist()
-                confirm = st.checkbox(f"Подтвердить удаление {len(ids_to_delete)} товаров?", key=f"confirm_{key_suffix}")
+                confirm = st.checkbox(str(f"Подтвердить удаление {len(ids_to_delete)} товаров?"), key=f"confirm_{key_suffix}")
                 if confirm:
                     try:
-                        db.query(Product).filter(Product.id.in_(ids_to_delete)).delete(synchronize_session=False)
+                        deleted = db.query(Product).filter(Product.id.in_(ids_to_delete)).delete(synchronize_session='fetch')
                         db.commit()
-                        st.success(f"Удалено {len(ids_to_delete)} товаров.")
+                        st.success(f"Удалено {deleted} товаров.")
                         st.rerun()
                     except Exception as e:
                         db.rollback()
@@ -338,11 +337,11 @@ elif selected_page == "Диагностика":
         
         # Товары без баллов PassMark
         if type_cpu:
-            models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
+            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
             products_no_scores = db.query(Product).filter(
                 Product.type_id == type_cpu.id,
                 Product.model_id.isnot(None),
-                Product.model_id.notin_(models_with_scores)
+                Product.model_id.notin_(model_ids_with_scores)
             ).all()
             if products_no_scores:
                 df_no_scores = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products_no_scores],
@@ -367,11 +366,11 @@ elif selected_page == "Диагностика":
                 st.success("✅ GPU – без характеристик: проблем нет!")
         
         if type_gpu:
-            models_with_scores = db.query(ModelScore.model_id).distinct().subquery()
+            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
             products_no_scores = db.query(Product).filter(
                 Product.type_id == type_gpu.id,
                 Product.model_id.isnot(None),
-                Product.model_id.notin_(models_with_scores)
+                Product.model_id.notin_(model_ids_with_scores)
             ).all()
             if products_no_scores:
                 df_no_scores = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url) for p in products_no_scores],
