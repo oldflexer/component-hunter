@@ -54,7 +54,7 @@ class PassMarkParser:
 
         search_input.clear()
         search_input.send_keys(model_name)
-        time.sleep(random.uniform(5, 10))
+        time.sleep(random.uniform(10, 15))
 
         try:
             WebDriverWait(driver, 15).until(
@@ -120,7 +120,7 @@ class PassMarkParser:
 
         search_input.clear()
         search_input.send_keys(model_name)
-        time.sleep(random.uniform(5, 10))
+        time.sleep(random.uniform(10, 15))
 
         try:
             WebDriverWait(driver, 15).until(

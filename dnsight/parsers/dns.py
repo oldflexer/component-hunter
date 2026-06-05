@@ -35,7 +35,7 @@ class DNSParser:
         
         self.driver = uc.Chrome(version_main=148, options=options)
         self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
-        time.sleep(5)
+        time.sleep(random.uniform(5, 10))
         self.driver.switch_to.window(self.driver.current_window_handle)
         self.logger.info(f"undetected ChromeDriver инициализирован (версия 148, eager strategy, headless={self.headless})")
         
@@ -54,7 +54,7 @@ class DNSParser:
                 break
             except Exception as e:
                 self.logger.warning(f"Ошибка загрузки {url}, попытка {attempt+1}/3: {e}")
-                time.sleep(5)
+                time.sleep(random.uniform(5, 10))
         else:
             self.logger.error(f"Не удалось загрузить {url} после 3 попыток")
             return []
@@ -63,30 +63,30 @@ class DNSParser:
         try:
             # 1. Кликнуть на текущий город (Москва)
             city_selector = 'span.city-select__text_90n, span[data-analytics-city-id], span[class*="city-select__text"]'
-            city_element = WebDriverWait(driver, 10).until(
+            city_element = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, city_selector))
             )
             city_element.click()
             self.logger.info("Кликнут текущий город, ожидаем модальное окно")
-            time.sleep(3)
+            time.sleep(random.uniform(5, 10))
 
             # 2. Найти поле ввода города
             input_selector = 'input[data-city-select="city-modal-input-attr"], input[placeholder="Найти город"]'
-            city_input = WebDriverWait(driver, 10).until(
+            city_input = WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, input_selector))
             )
             city_input.clear()
             city_input.send_keys("Каменск-Уральский")
             self.logger.info("Введён город 'Каменск-Уральский'")
-            time.sleep(3)
+            time.sleep(random.uniform(5, 10))
 
             # 3. Найти кнопку с нужным городом и кликнуть
-            target_button = WebDriverWait(driver, 10).until(
+            target_button = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, "//button//mark[contains(text(),'Каменск-Уральский')]/ancestor::button"))
             )
             target_button.click()
             self.logger.info("Выбран город 'Каменск-Уральский'")
-            time.sleep(3)  # ожидание перезагрузки страницы
+            time.sleep(random.uniform(5, 10))  # ожидание перезагрузки страницы
         except Exception as e:
             self.logger.warning(f"Не удалось сменить город: {e}. Продолжаем с текущим городом.")
 
@@ -152,7 +152,7 @@ class DNSParser:
         scrolling = True
         while scrolling:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(5)
+            time.sleep(random.uniform(5, 10))
 
             new_height = driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
@@ -198,7 +198,7 @@ class DNSParser:
                 break
             except Exception as e:
                 self.logger.warning(f"Ошибка загрузки {characteristics_url}: {e}, попытка {attempt+1}/3")
-                time.sleep(5)
+                time.sleep(random.uniform(5, 10))
                 if attempt == 2:
                     return {}
 
@@ -207,7 +207,7 @@ class DNSParser:
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '.product-characteristics__expand'))
             )
             expand_btn.click()
-            time.sleep(random.uniform(1, 2))
+            time.sleep(random.uniform(5, 10))
         except Exception:
             pass
 
