@@ -1112,7 +1112,7 @@ elif selected_page == "Тепловые карты":
                     val = 0.0
                 else:
                     diff = abs(target - gpu_score)
-                    val = (1.0 / diff)**(0.1) if diff != 0 else float('inf')
+                    val = 1.0 / diff if diff != 0 else float('inf')
                 row.append(val)
             matrix.append(row)
         return cpu_names, gpu_names, matrix
@@ -1135,7 +1135,7 @@ elif selected_page == "Тепловые карты":
         for i in range(len(cpu_names)):
             row = []
             for j in range(len(gpu_names)):
-                row.append((benefit_mat[i][j] * delta_mat[i][j] * optimal_mat[i][j])**(1/3))
+                row.append((benefit_mat[i][j] * delta_mat[i][j] * optimal_mat[i][j]) ** (1 / 3))
             combined.append(row)
         return cpu_names, gpu_names, combined
 
