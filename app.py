@@ -102,9 +102,10 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    selected_page = st.selectbox(
+    selected_page = st.radio(
         "Выберите раздел",
-        ["Таблицы", "Диагностика", "Графики", "Аналитика", "Подбор CPU/GPU", "Тепловые карты"]
+        ["Сводка", "Таблицы", "Диагностика", "Формы", "Графики", "Аналитика", "Запросы", "Подбор CPU/GPU", "Тепловые карты"],
+        index=0
     )
 
 # --- Общие вспомогательные функции ---
@@ -124,9 +125,156 @@ def get_last_benefit(product_id: int):
     return bh.benefit if bh else None
 
 # ===========================
+# 0. Сводка (общая статистика и топы)
+# ===========================
+if selected_page == "Сводка":
+    st.header("📈 Общая сводка")
+
+    # --- Функция для получения средней цены, скора, benefit за последние N дней (сегодня vs 7 дней назад) ---
+    def get_current_and_prev_avg(component_type: str, days_ago: int = 7):
+        type_obj = db.query(ProductType).filter_by(name=component_type).first()
+        if not type_obj:
+            return None
+        products = db.query(Product).filter_by(type_id=type_obj.id).all()
+        product_ids = [p.id for p in products]
+
+        # средняя цена сегодня (последние записи)
+        prices_today = []
+        for pid in product_ids:
+            ph = db.query(PriceHistory).filter_by(product_id=pid).order_by(PriceHistory.timestamp.desc()).first()
+            if ph and ph.price:
+                prices_today.append(ph.price)
+        avg_price_now = sum(prices_today) / len(prices_today) if prices_today else 0.0
+
+        # средняя цена days_ago дней назад (ближайшая запись, не старше cutoff)
+        cutoff = datetime.now() - timedelta(days=days_ago)
+        prices_prev = []
+        for pid in product_ids:
+            ph = db.query(PriceHistory).filter(
+                PriceHistory.product_id == pid,
+                PriceHistory.timestamp <= cutoff
+            ).order_by(PriceHistory.timestamp.desc()).first()
+            if ph and ph.price:
+                prices_prev.append(ph.price)
+        avg_price_prev = sum(prices_prev) / len(prices_prev) if prices_prev else avg_price_now
+
+        # средний скор сегодня (через model)
+        scores_now = []
+        for prod in products:
+            if prod.model_id:
+                sc = get_last_score(prod.model_id)
+                if sc:
+                    scores_now.append(sc)
+        avg_score_now = sum(scores_now) / len(scores_now) if scores_now else 0.0
+
+        scores_prev = []
+        for prod in products:
+            if prod.model_id:
+                prev_score = db.query(ModelScore).filter(
+                    ModelScore.model_id == prod.model_id,
+                    ModelScore.updated_at <= cutoff
+                ).order_by(ModelScore.updated_at.desc()).first()
+                if prev_score and prev_score.score:
+                    scores_prev.append(prev_score.score)
+        avg_score_prev = sum(scores_prev) / len(scores_prev) if scores_prev else avg_score_now
+
+        # средний benefit сегодня
+        benefit_now = []
+        for pid in product_ids:
+            bh = db.query(BenefitHistory).filter_by(product_id=pid).order_by(BenefitHistory.timestamp.desc()).first()
+            if bh and bh.benefit:
+                benefit_now.append(bh.benefit)
+        avg_benefit_now = sum(benefit_now) / len(benefit_now) if benefit_now else 0.0
+
+        benefit_prev = []
+        for pid in product_ids:
+            bh = db.query(BenefitHistory).filter(
+                BenefitHistory.product_id == pid,
+                BenefitHistory.timestamp <= cutoff
+            ).order_by(BenefitHistory.timestamp.desc()).first()
+            if bh and bh.benefit:
+                benefit_prev.append(bh.benefit)
+        avg_benefit_prev = sum(benefit_prev) / len(benefit_prev) if benefit_prev else avg_benefit_now
+
+        return {
+            "price_now": avg_price_now,
+            "price_prev": avg_price_prev,
+            "score_now": avg_score_now,
+            "score_prev": avg_score_prev,
+            "benefit_now": avg_benefit_now,
+            "benefit_prev": avg_benefit_prev,
+        }
+
+    # --- Топ 3 по Benefit для CPU и GPU ---
+    def get_top_benefit(component_type: str, top_n: int = 3):
+        type_obj = db.query(ProductType).filter_by(name=component_type).first()
+        if not type_obj:
+            return []
+        products = db.query(Product).filter_by(type_id=type_obj.id).all()
+        items = []
+        for prod in products:
+            if prod.model_id is None:
+                continue
+            benefit = get_last_benefit(prod.id)
+            if benefit is None or benefit <= 0:
+                continue
+            items.append({
+                "name": prod.name,
+                "model": prod.model.name if prod.model else "—",
+                "benefit": benefit
+            })
+        items.sort(key=lambda x: x["benefit"], reverse=True)
+        return items[:top_n]
+
+    # --- Отображение сводки ---
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🖥️ CPU")
+        stats_cpu = get_current_and_prev_avg("CPU")
+        if stats_cpu:
+            st.metric("Средняя цена (₽)", f"{stats_cpu['price_now']:.0f}", 
+                      delta=f"{stats_cpu['price_now'] - stats_cpu['price_prev']:.0f}")
+            st.metric("Средний балл PassMark", f"{stats_cpu['score_now']:.0f}", 
+                      delta=f"{stats_cpu['score_now'] - stats_cpu['score_prev']:.0f}")
+            st.metric("Средний Benefit", f"{stats_cpu['benefit_now']:.4f}", 
+                      delta=f"{stats_cpu['benefit_now'] - stats_cpu['benefit_prev']:.4f}")
+        else:
+            st.info("Нет данных по CPU")
+
+        st.subheader("🏆 Топ-3 CPU по Benefit")
+        top_cpu = get_top_benefit("CPU")
+        if top_cpu:
+            for i, item in enumerate(top_cpu, 1):
+                st.write(f"{i}. **{item['name']}** – Benefit {item['benefit']:.4f}")
+        else:
+            st.info("Нет данных")
+
+    with col2:
+        st.subheader("🎮 GPU")
+        stats_gpu = get_current_and_prev_avg("GPU")
+        if stats_gpu:
+            st.metric("Средняя цена (₽)", f"{stats_gpu['price_now']:.0f}", 
+                      delta=f"{stats_gpu['price_now'] - stats_gpu['price_prev']:.0f}")
+            st.metric("Средний балл PassMark", f"{stats_gpu['score_now']:.0f}", 
+                      delta=f"{stats_gpu['score_now'] - stats_gpu['score_prev']:.0f}")
+            st.metric("Средний Benefit", f"{stats_gpu['benefit_now']:.4f}", 
+                      delta=f"{stats_gpu['benefit_now'] - stats_gpu['benefit_prev']:.4f}")
+        else:
+            st.info("Нет данных по GPU")
+
+        st.subheader("🏆 Топ-3 GPU по Benefit")
+        top_gpu = get_top_benefit("GPU")
+        if top_gpu:
+            for i, item in enumerate(top_gpu, 1):
+                st.write(f"{i}. **{item['name']}** – Benefit {item['benefit']:.4f}")
+        else:
+            st.info("Нет данных")
+
+# ===========================
 # 1. Таблицы с data_editor (удаление через чекбоксы в таблице)
 # ===========================
-if selected_page == "Таблицы":
+elif selected_page == "Таблицы":
     
     def render_table_with_data_editor(table_name: str, query, id_column: str, display_columns: list, column_names: list = None):
         """Отображает таблицу с колонкой чекбоксов (первая колонка, без заголовка) для удаления."""
@@ -380,7 +528,76 @@ elif selected_page == "Диагностика":
                 st.success("✅ GPU – без баллов PassMark: проблем нет!")
 
 # ===========================
-# 3. Графики (последние 30 дней)
+# 3. Формы для редактирования характеристик CPU/GPU
+# ===========================
+elif selected_page == "Формы":
+    form_tab1, form_tab2 = st.tabs(["CPU", "GPU"])
+
+    def edit_attributes(component_type: str):
+        type_obj = db.query(ProductType).filter_by(name=component_type).first()
+        if not type_obj:
+            st.warning(f"Тип {component_type} не найден в БД.")
+            return
+
+        products = db.query(Product).filter_by(type_id=type_obj.id).all()
+        if not products:
+            st.info(f"Нет продуктов типа {component_type}.")
+            return
+
+        product_names = {p.name: p.id for p in products}
+        selected_name = st.selectbox(f"Выберите {component_type}", list(product_names.keys()))
+        selected_id = product_names[selected_name]
+        product = db.query(Product).filter_by(id=selected_id).first()
+
+        # Получаем текущие атрибуты продукта
+        attrs = db.query(AttributeValue).filter_by(product_id=selected_id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+
+        st.subheader("Редактирование характеристик")
+        with st.form(key=f"edit_form_{component_type}"):
+            new_attrs = {}
+            for attr_name, current_value in attr_dict.items():
+                new_val = st.text_input(f"{attr_name}", value=current_value, key=f"{component_type}_{attr_name}")
+                new_attrs[attr_name] = new_val
+
+            # Возможность добавить новый атрибут
+            new_attr_name = st.text_input("Название нового атрибута (оставьте пустым, если не нужно)")
+            new_attr_value = st.text_input("Значение нового атрибута") if new_attr_name else ""
+
+            submitted = st.form_submit_button("Сохранить изменения")
+            if submitted:
+                try:
+                    # Обновляем существующие
+                    for attr_name, new_value in new_attrs.items():
+                        attr = db.query(Attribute).filter_by(name=attr_name).first()
+                        if attr:
+                            av = db.query(AttributeValue).filter_by(product_id=selected_id, attribute_id=attr.id).first()
+                            if av:
+                                av.raw_value = new_value
+                                av.updated_at = datetime.utcnow()
+                    # Добавляем новый атрибут
+                    if new_attr_name and new_attr_value:
+                        attr = db.query(Attribute).filter_by(name=new_attr_name).first()
+                        if not attr:
+                            attr = Attribute(name=new_attr_name, type_id=type_obj.id)
+                            db.add(attr)
+                            db.flush()
+                        av = AttributeValue(product_id=selected_id, attribute_id=attr.id, raw_value=new_attr_value)
+                        db.add(av)
+                    db.commit()
+                    st.success("Характеристики обновлены!")
+                    st.rerun()
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"Ошибка сохранения: {e}")
+
+    with form_tab1:
+        edit_attributes("CPU")
+    with form_tab2:
+        edit_attributes("GPU")
+
+# ===========================
+# 4. Графики (последние 30 дней)
 # ===========================
 elif selected_page == "Графики":
     cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
@@ -451,7 +668,7 @@ elif selected_page == "Графики":
         plot_product_history("GPU")
 
 # ===========================
-# 4. Аналитика (средние по дням)
+# 5. Аналитика (средние по дням)
 # ===========================
 elif selected_page == "Аналитика":
     cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
@@ -543,7 +760,62 @@ elif selected_page == "Аналитика":
         plot_trends("GPU")
 
 # ===========================
-# 5. Подбор CPU/GPU
+# 6. Запросы (таблицы CPU и GPU)
+# ===========================
+elif selected_page == "Запросы":
+    tab_cpu, tab_gpu = st.tabs(["CPU", "GPU"])
+
+    def build_component_table(component_type: str):
+        type_obj = db.query(ProductType).filter_by(name=component_type).first()
+        if not type_obj:
+            st.warning(f"Тип {component_type} не найден.")
+            return
+
+        products = db.query(Product).filter_by(type_id=type_obj.id).all()
+        data = []
+        for prod in products:
+            if prod.model_id is None:
+                continue
+            model = db.query(Model).filter_by(id=prod.model_id).first()
+            if not model:
+                continue
+            score = get_last_score(model.id)
+            if score is None:
+                continue
+            price = get_last_price(prod.id)
+            if price is None:
+                continue
+            benefit = get_last_benefit(prod.id)
+            if benefit is None:
+                benefit = 0.0
+            data.append({
+                "product_name": prod.name,
+                "model_name": model.name,
+                "score": score,
+                "price": price,
+                "benefit": benefit,
+            })
+        if not data:
+            st.info(f"Нет данных для {component_type}.")
+            return
+
+        df = pd.DataFrame(data)
+        # Вычисляем benefit % относительно максимального
+        max_benefit = df['benefit'].max()
+        if max_benefit > 0:
+            df['benefit %'] = (df['benefit'] / max_benefit * 100).round(1)
+        else:
+            df['benefit %'] = 0
+        df = df.sort_values(by="benefit", ascending=False)
+        st.dataframe(df[["product_name", "model_name", "score", "price", "benefit", "benefit %"]], width='stretch')
+
+    with tab_cpu:
+        build_component_table("CPU")
+    with tab_gpu:
+        build_component_table("GPU")
+
+# ===========================
+# 7. Подбор CPU/GPU
 # ===========================
 elif selected_page == "Подбор CPU/GPU":
     sub_tab1, sub_tab2 = st.tabs(["Подбор GPU под CPU", "Подбор CPU под GPU"])
@@ -657,10 +929,10 @@ elif selected_page == "Подбор CPU/GPU":
                     st.dataframe(df_cpu[["Model Name", "Score", "Price (RUB)", "Benefit", "Benefit %", "Match"]], width='stretch')
 
 # ===========================
-# 6. Тепловые карты (модели + конкретные товары)
+# 8. Тепловые карты (модели + чипы GPU) с нормализацией
 # ===========================
 elif selected_page == "Тепловые карты":  
-    # Общие вспомогательные функции (модели CPU, чипы GPU)
+    # ---- Вспомогательные функции ----
     def get_cpu_models_data():
         cpu_type = db.query(ProductType).filter_by(name="CPU").first()
         if not cpu_type:
@@ -676,6 +948,7 @@ elif selected_page == "Тепловые карты":
             if benefit is None:
                 benefit = 0.0
             cpu_data.append({
+                "id": model.id,
                 "name": model.name,
                 "score": score,
                 "benefit": benefit
@@ -722,8 +995,40 @@ elif selected_page == "Тепловые карты":
             })
         result.sort(key=lambda x: x["score"], reverse=True)
         return result
+    
+    # ---- Динамика Benefit за неделю (отношение) ----
+    def get_delta_ratio(product_id: int, days: int = 7) -> float:
+        now = datetime.now()
+        cutoff = now - timedelta(days=days)
+        last = db.query(BenefitHistory).filter_by(product_id=product_id).order_by(BenefitHistory.timestamp.desc()).first()
+        if not last or last.benefit == 0:
+            return 1.0   # нейтральное значение
+        prev = db.query(BenefitHistory).filter(
+            BenefitHistory.product_id == product_id,
+            BenefitHistory.timestamp <= cutoff
+        ).order_by(BenefitHistory.timestamp.desc()).first()
+        if not prev or prev.benefit == 0:
+            return 1.0
+        return last.benefit / prev.benefit
 
-    # --- Матричные вычисления для моделей ---
+    # ---- Нормализация матрицы в диапазон [0,1] ----
+    def normalize_matrix(matrix):
+        flat = [val for row in matrix for val in row if val != float('inf') and not pd.isna(val)]
+        if not flat:
+            return [[0.5] * len(matrix[0]) for _ in range(len(matrix))]
+        min_val = min(flat)
+        max_val = max(flat)
+        if max_val == min_val:
+            return [[0.5] * len(row) for row in matrix]
+        norm = [[(val - min_val) / (max_val - min_val) for val in row] for row in matrix]
+        # Заменяем inf на 1.0 (максимум)
+        for i in range(len(norm)):
+            for j in range(len(norm[i])):
+                if matrix[i][j] == float('inf'):
+                    norm[i][j] = 1.0
+        return norm
+
+    # ---- Матрицы Benefit, Динамика, Оптимальность ----
     @st.cache_data(ttl=3600)
     def compute_heatmap_benefit_models():
         cpus = get_cpu_models_data()
@@ -738,9 +1043,49 @@ elif selected_page == "Тепловые карты":
             cpu_ben = cpu.get("benefit", 0.0) or 0.0
             for gpu in gpus:
                 gpu_ben = gpu.get("benefit", 0.0) or 0.0
-                product = (cpu_ben * gpu_ben) ** 0.1
-                result = product if product >= 0 else 0.0
-                row.append(result)
+                row.append(cpu_ben * gpu_ben)
+            matrix.append(row)
+        return cpu_names, gpu_names, matrix
+    
+    @st.cache_data(ttl=3600)
+    def compute_heatmap_delta_models():
+        cpus = get_cpu_models_data()
+        gpus = get_gpu_raw_values_data()
+        if not cpus or not gpus:
+            return None, None, None
+
+        cpu_delta = {}
+        for cpu in cpus:
+            product = db.query(Product).filter_by(model_id=cpu["id"]).first()
+            if product:
+                cpu_delta[cpu["name"]] = get_delta_ratio(product.id)
+            else:
+                cpu_delta[cpu["name"]] = 1.0
+
+        gpu_delta = {}
+        gpu_attr = db.query(Attribute).filter_by(name="Графический процессор").first()
+        if gpu_attr:
+            for gpu in gpus:
+                av = db.query(AttributeValue).filter_by(attribute_id=gpu_attr.id, raw_value=gpu["name"]).first()
+                if av:
+                    product = db.query(Product).filter_by(id=av.product_id).first()
+                    if product:
+                        gpu_delta[gpu["name"]] = get_delta_ratio(product.id)
+                    else:
+                        gpu_delta[gpu["name"]] = 1.0
+                else:
+                    gpu_delta[gpu["name"]] = 1.0
+        else:
+            for gpu in gpus:
+                gpu_delta[gpu["name"]] = 1.0
+
+        cpu_names = [c["name"] for c in cpus]
+        gpu_names = [g["name"] for g in gpus]
+        matrix = []
+        for cpu in cpu_names:
+            row = []
+            for gpu in gpu_names:
+                row.append(cpu_delta[cpu] * gpu_delta[gpu])
             matrix.append(row)
         return cpu_names, gpu_names, matrix
 
@@ -767,56 +1112,85 @@ elif selected_page == "Тепловые карты":
                     val = 0.0
                 else:
                     diff = abs(target - gpu_score)
-                    val = (1.0 / diff) ** 0.5 if diff != 0 else float('inf')
+                    val = (1.0 / diff)**(0.1) if diff != 0 else float('inf')
                 row.append(val)
             matrix.append(row)
         return cpu_names, gpu_names, matrix
 
+    # ---- Объединённая матрица для кривой подбора ----
     @st.cache_data(ttl=3600)
     def compute_heatmap_combined_models():
         res_benefit = compute_heatmap_benefit_models()
+        res_delta = compute_heatmap_delta_models()
         res_optimal = compute_heatmap_optimal_models()
-        if res_benefit[0] is None or res_optimal[0] is None:
+        if res_benefit[0] is None or res_delta[0] is None or res_optimal[0] is None:
             return None, None, None
         cpu_names = res_benefit[0]
         gpu_names = res_benefit[1]
         benefit_mat = res_benefit[2]
+        delta_mat = res_delta[2]
         optimal_mat = res_optimal[2]
-        combined = [[(benefit_mat[i][j] * optimal_mat[i][j]) ** 0.5 for j in range(len(gpu_names))] for i in range(len(cpu_names))]
+
+        combined = []
+        for i in range(len(cpu_names)):
+            row = []
+            for j in range(len(gpu_names)):
+                row.append((benefit_mat[i][j] * delta_mat[i][j] * optimal_mat[i][j])**(1/3))
+            combined.append(row)
         return cpu_names, gpu_names, combined
 
-    # --- Отрисовка вкладок (модели) ---
-    tab_models1, tab_models2, tab_models3 = st.tabs(["📊 Benefit (модели)", "🎯 Оптимальность (модели)", "🔗 Кривая подбора (модели)"])
+    # ---- Отрисовка вкладок с нормализацией ----
+    tab_models1, tab_models2, tab_models3, tab_models4 = st.tabs(
+        ["📊 Benefit (модели)", 
+         "📈 Динамика Benefit за неделю",
+         "🎯 Оптимальность (модели)", 
+         "🔗 Кривая подбора (модели)"]
+    )
 
     with tab_models1:
-        cpu_names, gpu_names, mat = compute_heatmap_benefit_models()
+        cpu_names, gpu_names, raw_mat = compute_heatmap_benefit_models()
         if cpu_names is None:
             st.warning("Недостаточно данных для Benefit (модели).")
         else:
-            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
-                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="√(Benefit)"),
-                            title="Тепловая карта: √(Benefit_CPU × Benefit_GPU)",
-                            color_continuous_scale="Viridis", aspect="auto", height=4800)
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Benefit (норм.)"),
+                            title="Тепловая карта: Benefit_CPU × Benefit_GPU",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
     with tab_models2:
-        cpu_names, gpu_names, mat = compute_heatmap_optimal_models()
+        cpu_names, gpu_names, raw_mat = compute_heatmap_delta_models()
         if cpu_names is None:
-            st.warning("Недостаточно данных для Оптимальности (модели).")
+            st.warning("Недостаточно данных для динамики Benefit.")
         else:
-            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
-                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="√(1/Δ)"),
-                            title="Тепловая карта: √(1/|Score_CPU×1.25 - Score_GPU|)",
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Динамика (норм.)"),
+                            title="Тепловая карта: Δ(Benefit_CPU) × Δ(Benefit_GPU)",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
     with tab_models3:
-        cpu_names, gpu_names, mat = compute_heatmap_combined_models()
+        cpu_names, gpu_names, raw_mat = compute_heatmap_optimal_models()
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Оптимальности (модели).")
+        else:
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Оптимальность (норм.)"),
+                            title="Тепловая карта: 1/|Score_CPU×1.25 - Score_GPU|",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    with tab_models4:
+        cpu_names, gpu_names, raw_mat = compute_heatmap_combined_models()
         if cpu_names is None:
             st.warning("Недостаточно данных для Кривой подбора (модели).")
         else:
-            fig = px.imshow(mat, x=gpu_names, y=cpu_names,
-                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Произведение"),
-                            title="Тепловая карта: Benefit × Оптимальность",
-                            color_continuous_scale="Viridis", aspect="auto", height=4800)
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
+                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Кривая (норм.)"),
+                            title="Тепловая карта: Benefit × Динамика × Оптимальность",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')

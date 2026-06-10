@@ -28,9 +28,7 @@ def normalize_gpu_model(raw_model: str) -> str:
     for pattern in nvidia_patterns + amd_patterns:
         match = re.search(pattern, raw_model, re.IGNORECASE)
         if match:
-            # Приводим к правильному регистру: Radeon RX 7650 GRE
             result = match.group(0).strip()
-            # Можно дополнительно привести первые буквы к верхнему регистру
             return result
     # Если ничего не найдено, возвращаем исходную строку, но удаляем квадратные скобки и лишнее
     return re.sub(r'\s*\[.*?\]', '', raw_model).strip()
@@ -73,7 +71,21 @@ def save_product_and_attributes(
     prod_type = ensure_product_type(db, type_name)
     type_id_value = prod_type.id
 
-    model_name = specs.get("Модель") or product_name.split('[')[0].strip()
+    # Определяем имя модели для CPU/GPU
+    model_name = None
+    if type_name in ("CPU", "GPU"):
+        if type_name == "GPU":
+            # Для GPU берём значение атрибута "Графический процессор"
+            raw_model = specs.get("Графический процессор")
+            if raw_model:
+                model_name = normalize_gpu_model(raw_model)
+        else:
+            # Для CPU пробуем атрибут "Модель", иначе обрезаем название продукта
+            model_name = specs.get("Модель") or product_name.split('[')[0].strip()
+        
+        # Если модель всё ещё не найдена, используем обрезанное название продукта
+        if not model_name:
+            model_name = product_name.split('[')[0].strip()
 
     model = None
     if model_name and type_name in ("CPU", "GPU"):
