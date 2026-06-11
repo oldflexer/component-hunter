@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
-from dnsight.core.models import ProductType, Product, Model
+from dnsight.core.models import AttributeValue, ProductType, Product, Model
 from dashboard.utils import get_last_score, get_last_price, get_last_benefit
 
 
@@ -44,9 +44,41 @@ def build_component_table(db: Session, component_type: str):
     st.dataframe(df[["product_name", "model_name", "score", "price", "benefit", "benefit %"]], width='stretch', height=600)
 
 
+def build_mb_table(db: Session):
+    type_obj = db.query(ProductType).filter_by(name="Motherboard").first()
+    if not type_obj:
+        st.warning("Тип Motherboard не найден.")
+        return
+
+    products = db.query(Product).filter_by(type_id=type_obj.id).all()
+    data = []
+    for prod in products:
+        # Получаем название модели из атрибутов
+        attrs = db.query(AttributeValue).filter_by(product_id=prod.id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+        model_name = attr_dict.get("Модель", "")
+        price = get_last_price(db, prod.id)
+        if price is None:
+            continue
+        data.append({
+            "product_name": prod.name,
+            "model_name": model_name,
+            "price": price,
+        })
+    if not data:
+        st.info("Нет данных для Motherboard.")
+        return
+
+    df = pd.DataFrame(data)
+    df = df.sort_values(by="price", ascending=True)
+    st.dataframe(df[["product_name", "model_name", "price"]], width='stretch', height=600)
+
+
 def render(db: Session):
-    tab_cpu, tab_gpu = st.tabs(["CPU", "GPU"])
+    tab_cpu, tab_gpu, tab_mb = st.tabs(["CPU", "GPU", "Motherboard"])
     with tab_cpu:
         build_component_table(db, "CPU")
     with tab_gpu:
         build_component_table(db, "GPU")
+    with tab_mb:
+        build_mb_table(db)

@@ -64,9 +64,39 @@ def plot_product_history(db: Session, component_type: str):
             st.info("Нет данных о Benefit за последние 30 дней")
 
 
+def plot_mb_price_history(db: Session):
+    type_obj = db.query(ProductType).filter_by(name="Motherboard").first()
+    if not type_obj:
+        st.warning("Нет данных для Motherboard")
+        return
+    products = db.query(Product).filter_by(type_id=type_obj.id).all()
+    if not products:
+        st.info("Нет продуктов типа Motherboard")
+        return
+
+    product_options = {p.name: p.id for p in products}
+    selected_name = st.selectbox("Выберите материнскую плату", list(product_options.keys()), key="select_mb")
+    selected_id = product_options[selected_name]
+
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    prices = db.query(PriceHistory).filter(
+        PriceHistory.product_id == selected_id,
+        PriceHistory.timestamp >= thirty_days_ago
+    ).order_by(PriceHistory.timestamp).all()
+    df_price = pd.DataFrame([(p.timestamp, p.price) for p in prices], columns=["date", "price"])
+
+    if not df_price.empty:
+        fig = px.line(df_price, x="date", y="price", title="Цена", labels={"price": "₽"})
+        st.plotly_chart(fig, width='stretch', height=600)
+    else:
+        st.info("Нет данных о ценах за последние 30 дней")
+
+
 def render(db: Session):
-    cpu_tab, gpu_tab = st.tabs(["CPU", "GPU"])
+    cpu_tab, gpu_tab, mb_tab = st.tabs(["CPU", "GPU", "Motherboard"])
     with cpu_tab:
         plot_product_history(db, "CPU")
     with gpu_tab:
         plot_product_history(db, "GPU")
+    with mb_tab:
+        plot_mb_price_history(db)
