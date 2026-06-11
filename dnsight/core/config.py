@@ -8,7 +8,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///dnsight.db")
 # Категории для парсинга
 DNS_CATEGORIES = {
     "cpu": "https://www.dns-shop.ru/catalog/17a899cd16404e77/processory/",
-    # "motherboard": "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/",
+    "motherboard": "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/",
     "gpu": "https://www.dns-shop.ru/catalog/17a89aab16404e77/videokarty/",
     # "ram_dimm": "https://www.dns-shop.ru/catalog/17a89a3916404e77/operativnaa-pamat-dimm/",
     # "ram_sodimm": "https://www.dns-shop.ru/catalog/17a9b91b16404e77/operativnaa-pamat-so-dimm/",
