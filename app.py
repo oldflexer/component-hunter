@@ -11,7 +11,7 @@ from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_product_and_attributes
 from dnsight.workers.update_passmark import update_passmark_scores
 from dnsight.core.config import DNS_CATEGORIES
-from dashboard.pages import summary, tables, diagnostics, forms, graphs, analytics, queries, selection, heatmaps
+from dashboard.pages import summary, tables, diagnostics, forms, graphs, analytics, queries, selection, heatmaps, builds
 from dashboard.config import CATEGORY_TO_TYPE
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
@@ -79,7 +79,16 @@ with st.sidebar:
 
     selected_page = st.radio(
         "Выберите раздел",
-        ["Сводка", "Таблицы", "Диагностика", "Формы", "Графики", "Аналитика", "Запросы", "Подбор CPU/GPU", "Тепловые карты"],
+        ["Сводка",
+         "Таблицы",
+         "Диагностика",
+         "Формы",
+         "Графики",
+         "Аналитика",
+         "Запросы",
+         "Подбор CPU/GPU",
+         "Тепловые карты",
+         "ПК-подбор"],
         index=0
     )
 
@@ -104,3 +113,5 @@ elif selected_page == "Подбор CPU/GPU":
     selection.render(db)
 elif selected_page == "Тепловые карты":
     heatmaps.render(db)
+elif selected_page == "ПК-подбор":
+    builds.render(db)

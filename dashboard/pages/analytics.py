@@ -64,7 +64,7 @@ def plot_trends(db: Session, component_type: str):
             fig = px.line(avg_price, x="date", y="avg_price",
                           title=f"Средняя цена {component_type}",
                           labels={"avg_price": "₽", "date": "Дата"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о ценах")
     with col2:
@@ -72,7 +72,7 @@ def plot_trends(db: Session, component_type: str):
             fig = px.line(avg_score, x="date", y="avg_score",
                           title=f"Средний балл PassMark {component_type}",
                           labels={"avg_score": "баллы", "date": "Дата"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о скорах")
     with col3:
@@ -80,7 +80,7 @@ def plot_trends(db: Session, component_type: str):
             fig = px.line(avg_benefit, x="date", y="avg_benefit",
                           title=f"Средний Benefit {component_type}",
                           labels={"avg_benefit": "Benefit", "date": "Дата"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о Benefit")
 

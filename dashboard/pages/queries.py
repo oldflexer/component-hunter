@@ -41,7 +41,7 @@ def build_component_table(db: Session, component_type: str):
     max_benefit = df['benefit'].max()
     df['benefit %'] = (df['benefit'] / max_benefit * 100).round(1) if max_benefit > 0 else 0
     df = df.sort_values(by="benefit", ascending=False)
-    st.dataframe(df[["product_name", "model_name", "score", "price", "benefit", "benefit %"]], width='stretch')
+    st.dataframe(df[["product_name", "model_name", "score", "price", "benefit", "benefit %"]], width='stretch', height=600)
 
 
 def render(db: Session):

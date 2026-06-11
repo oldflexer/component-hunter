@@ -47,19 +47,19 @@ def plot_product_history(db: Session, component_type: str):
     with col1:
         if not df_price.empty:
             fig = px.line(df_price, x="date", y="price", title="Цена", labels={"price": "₽"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о ценах за последние 30 дней")
     with col2:
         if not df_score.empty:
             fig = px.line(df_score, x="date", y="score", title="PassMark Score", labels={"score": "баллы"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о скорах за последние 30 дней")
     with col3:
         if not df_benefit.empty:
             fig = px.line(df_benefit, x="date", y="benefit", title="Benefit", labels={"benefit": "Benefit"})
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, width='stretch', height=600)
         else:
             st.info("Нет данных о Benefit за последние 30 дней")
 

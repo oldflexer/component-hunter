@@ -7,7 +7,8 @@ from dnsight.core.models import ProductType, Model, Product, Attribute, Attribut
 from dashboard.utils import get_last_score, get_last_benefit, get_delta_ratio, normalize_matrix
 
 
-# --- Вспомогательные функции для получения данных ---
+# --- Вспомогательные функции для получения данных (с кэшированием) ---
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def get_cpu_models_data(db: Session):
     cpu_type = db.query(ProductType).filter_by(name="CPU").first()
     if not cpu_type:
@@ -30,6 +31,7 @@ def get_cpu_models_data(db: Session):
     return cpu_data
 
 
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def get_gpu_raw_values_data(db: Session):
     gpu_attr = db.query(Attribute).filter_by(name="Графический процессор").first()
     if not gpu_attr:
@@ -71,7 +73,8 @@ def get_gpu_raw_values_data(db: Session):
     return result
 
 
-# --- Матричные вычисления ---
+# --- Матричные вычисления (с кэшированием) ---
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_benefit(db: Session):
     cpus = get_cpu_models_data(db)
     gpus = get_gpu_raw_values_data(db)
@@ -88,42 +91,7 @@ def compute_heatmap_benefit(db: Session):
     return cpu_names, gpu_names, matrix
 
 
-def compute_heatmap_delta(db: Session):
-    cpus = get_cpu_models_data(db)
-    gpus = get_gpu_raw_values_data(db)
-    if not cpus or not gpus:
-        return None, None, None
-
-    cpu_delta = {}
-    for cpu in cpus:
-        product = db.query(Product).filter_by(model_id=cpu["id"]).first()
-        cpu_delta[cpu["name"]] = get_delta_ratio(db, product.id) if product else 1.0
-
-    gpu_delta = {}
-    gpu_attr = db.query(Attribute).filter_by(name="Графический процессор").first()
-    if gpu_attr:
-        for gpu in gpus:
-            av = db.query(AttributeValue).filter_by(attribute_id=gpu_attr.id, raw_value=gpu["name"]).first()
-            if av:
-                product = db.query(Product).filter_by(id=av.product_id).first()
-                gpu_delta[gpu["name"]] = get_delta_ratio(db, product.id) if product else 1.0
-            else:
-                gpu_delta[gpu["name"]] = 1.0
-    else:
-        for gpu in gpus:
-            gpu_delta[gpu["name"]] = 1.0
-
-    cpu_names = [c["name"] for c in cpus]
-    gpu_names = [g["name"] for g in gpus]
-    matrix = []
-    for cpu in cpu_names:
-        row = []
-        for gpu in gpu_names:
-            row.append(cpu_delta[cpu] * gpu_delta[gpu])
-        matrix.append(row)
-    return cpu_names, gpu_names, matrix
-
-
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_optimal(db: Session):
     cpus = get_cpu_models_data(db)
     gpus = get_gpu_raw_values_data(db)
@@ -146,37 +114,35 @@ def compute_heatmap_optimal(db: Session):
                 val = 0.0
             else:
                 diff = abs(target - gpu_score)
-                val = (1.0 / diff) ** 0.1 if diff != 0 else float('inf')
+                val = 1.0 / diff if diff != 0 else float('inf')
             row.append(val)
         matrix.append(row)
     return cpu_names, gpu_names, matrix
 
 
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_combined(db: Session):
     res_benefit = compute_heatmap_benefit(db)
-    res_delta = compute_heatmap_delta(db)
     res_optimal = compute_heatmap_optimal(db)
-    # Исправленная проверка
-    if res_benefit is None or res_delta is None or res_optimal is None:
+    if res_benefit is None or res_optimal is None:
         return None, None, None
-    if res_benefit[0] is None or res_delta[0] is None or res_optimal[0] is None:
+    if res_benefit[0] is None or res_optimal[0] is None:
         return None, None, None
     cpu_names, gpu_names = res_benefit[0], res_benefit[1]
     benefit_mat = res_benefit[2]
-    delta_mat = res_delta[2]
     optimal_mat = res_optimal[2]
     combined = []
     for i in range(len(cpu_names)):
         row = []
         for j in range(len(gpu_names)):
-            row.append((benefit_mat[i][j] * delta_mat[i][j] * optimal_mat[i][j]) ** (1/3))
+            row.append((benefit_mat[i][j] * optimal_mat[i][j]) ** (1/2))
         combined.append(row)
     return cpu_names, gpu_names, combined
 
 
 # --- Рендеринг ---
 def render(db: Session):
-    tabs = st.tabs(["📊 Benefit (модели)", "📈 Динамика Benefit за неделю", "🎯 Оптимальность (модели)", "🔗 Кривая подбора (модели)"])
+    tabs = st.tabs(["📊 Benefit (модели)", "🎯 Оптимальность (модели)", "🔗 Кривая подбора (модели)"])
 
     # Benefit
     with tabs[0]:
@@ -191,21 +157,8 @@ def render(db: Session):
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
-    # Динамика
-    with tabs[1]:
-        cpu_names, gpu_names, raw_mat = compute_heatmap_delta(db)
-        if cpu_names is None:
-            st.warning("Недостаточно данных для динамики Benefit.")
-        else:
-            norm_mat = normalize_matrix(raw_mat)
-            fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
-                            labels=dict(x="GPU (чип)", y="CPU (модель)", color="Динамика (норм.)"),
-                            title="Тепловая карта: Δ(Benefit_CPU) × Δ(Benefit_GPU)",
-                            color_continuous_scale="Plasma", aspect="auto", height=4800)
-            st.plotly_chart(fig, width='stretch')
-
     # Оптимальность
-    with tabs[2]:
+    with tabs[1]:
         cpu_names, gpu_names, raw_mat = compute_heatmap_optimal(db)
         if cpu_names is None:
             st.warning("Недостаточно данных для Оптимальности (модели).")
@@ -218,7 +171,7 @@ def render(db: Session):
             st.plotly_chart(fig, width='stretch')
 
     # Кривая подбора
-    with tabs[3]:
+    with tabs[2]:
         cpu_names, gpu_names, raw_mat = compute_heatmap_combined(db)
         if cpu_names is None:
             st.warning("Недостаточно данных для Кривой подбора (модели).")
@@ -226,6 +179,6 @@ def render(db: Session):
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
                             labels=dict(x="GPU (чип)", y="CPU (модель)", color="Кривая (норм.)"),
-                            title="Тепловая карта: Benefit × Динамика × Оптимальность",
+                            title="Тепловая карта: (Benefit × Динамика × Оптимальность)⅓",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
