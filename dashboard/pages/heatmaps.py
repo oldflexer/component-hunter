@@ -1,3 +1,6 @@
+import math
+import re
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -73,7 +76,120 @@ def get_gpu_raw_values_data(db: Session):
     return result
 
 
-# --- Матричные вычисления (с кэшированием) ---
+# ---- Данные для CPU × MB (общие: сокет, score, benefit) ----
+def extract_pcie_version(pcie_str: str) -> float:
+    if not pcie_str:
+        return 0.0
+    match = re.search(r'(\d+\.?\d*)', pcie_str)
+    return float(match.group(1)) if match else 0.0
+
+
+def extract_first_number(value: str) -> int:
+    match = re.search(r'\d+', value)
+    return int(match.group()) if match else 0
+
+
+def extract_tdp(value: str) -> int:
+    match = re.search(r'\d+', value)
+    return int(match.group()) if match else 0
+
+
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+def get_cpu_socket_pcie(db: Session):
+    cpu_type = db.query(ProductType).filter_by(name="CPU").first()
+    if not cpu_type:
+        return []
+    cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
+    cpu_list = []
+    for model in cpu_models:
+        score = get_last_score(db, model.id)
+        if score is None:
+            continue
+        product = db.query(Product).filter_by(model_id=model.id).first()
+        if not product:
+            continue
+        benefit = get_last_benefit(db, product.id) or 0.0
+        attrs = db.query(AttributeValue).filter_by(product_id=product.id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+        socket = attr_dict.get("Сокет")
+        pcie_raw = attr_dict.get("Встроенный контроллер PCI Express")
+        pcie = extract_pcie_version(pcie_raw) if pcie_raw else 0.0
+        tdp_raw = attr_dict.get("Тепловыделение (TDP)")
+        tdp = extract_tdp(tdp_raw) if tdp_raw else 0
+        if not socket:
+            continue
+        cpu_list.append({
+            "name": model.name,
+            "benefit": benefit,
+            "score": score,
+            "socket": socket.strip(),
+            "pcie": pcie,
+            "tdp": tdp,
+        })
+    # Группировка по сокету, внутри по score
+    socket_max_score = {}
+    for cpu in cpu_list:
+        s = cpu["socket"]
+        if s not in socket_max_score or cpu["score"] > socket_max_score[s]:
+            socket_max_score[s] = cpu["score"]
+    sorted_sockets = sorted(socket_max_score.keys(), key=lambda s: socket_max_score[s], reverse=True)
+    socket_order = {s: i for i, s in enumerate(sorted_sockets)}
+    cpu_list.sort(key=lambda x: (socket_order[x["socket"]], -x["score"]))
+    return cpu_list
+
+
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+def get_mb_socket_pcie(db: Session):
+    mb_type = db.query(ProductType).filter_by(name="Motherboard").first()
+    if not mb_type:
+        return []
+    mb_products = db.query(Product).filter_by(type_id=mb_type.id).all()
+    mb_list = []
+    for prod in mb_products:
+        benefit = get_last_benefit(db, prod.id) or 0.0
+        score = 0.0
+        if prod.model_id:
+            score = get_last_score(db, prod.model_id) or 0.0
+        attrs = db.query(AttributeValue).filter_by(product_id=prod.id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+        socket = attr_dict.get("Сокет")
+        pcie_raw = attr_dict.get("Версия PCI Express")
+        pcie = extract_pcie_version(pcie_raw) if pcie_raw else 0.0
+        phase_raw = attr_dict.get("Количество фаз питания")
+        phase = extract_first_number(phase_raw) if phase_raw else 0
+        if not socket:
+            continue
+
+        display_name = None
+        if prod.model_id:
+            model = db.query(Model).filter_by(id=prod.model_id).first()
+            if model:
+                display_name = model.name
+        if not display_name:
+            display_name = attr_dict.get("Модель")
+        if not display_name:
+            display_name = prod.name
+
+        mb_list.append({
+            "name": display_name,
+            "benefit": benefit,
+            "score": score,
+            "socket": socket.strip(),
+            "pcie": pcie,
+            "phase": phase,
+        })
+    # Сортируем по порядку сокетов из CPU
+    cpu_sorted = get_cpu_socket_pcie(db)
+    socket_order = {}
+    for cpu in cpu_sorted:
+        s = cpu["socket"]
+        if s not in socket_order:
+            socket_order[s] = len(socket_order)
+    mb_list.sort(key=lambda x: (socket_order.get(x["socket"], len(socket_order)), -x["score"]))
+    return mb_list
+
+
+# --- Матричные вычисления ---
 @st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_benefit(db: Session):
     cpus = get_cpu_models_data(db)
@@ -114,13 +230,13 @@ def compute_heatmap_optimal(db: Session):
                 val = 0.0
             else:
                 diff = abs(target - gpu_score)
-                val = 1.0 / diff if diff != 0 else float('inf')
+                val = (1 / diff) ** (1 / 2) if diff != 0 else float('inf')
             row.append(val)
         matrix.append(row)
     return cpu_names, gpu_names, matrix
 
 
-@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+# @st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_combined(db: Session):
     res_benefit = compute_heatmap_benefit(db)
     res_optimal = compute_heatmap_optimal(db)
@@ -135,20 +251,82 @@ def compute_heatmap_combined(db: Session):
     for i in range(len(cpu_names)):
         row = []
         for j in range(len(gpu_names)):
-            row.append((benefit_mat[i][j] * optimal_mat[i][j]) ** (1/2))
+            row.append((benefit_mat[i][j] * optimal_mat[i][j]) ** (1 / 2))
         combined.append(row)
     return cpu_names, gpu_names, combined
 
 
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+def compute_heatmap_cpu_mb_benefit(db: Session):
+    """Benefit CPU × MB (только сокет, без PCI‑E)"""
+    cpus = get_cpu_socket_pcie(db)
+    mbs = get_mb_socket_pcie(db)
+    if not cpus or not mbs:
+        return None, None, None
+    cpu_names = [c["name"] for c in cpus]
+    mb_names = [m["name"] for m in mbs]
+    matrix_cpu_mb = []
+    for cpu in cpus:
+        row = []
+        for mb in mbs:
+            if cpu["socket"] == mb["socket"]:
+                row.append(cpu["benefit"] * mb["benefit"])
+            else:
+                row.append(None)
+        matrix_cpu_mb.append(row)
+    return cpu_names, mb_names, matrix_cpu_mb
+
+
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+def compute_heatmap_power(db: Session):
+    """Тепловая карта Power: 1/abs(TDP/10.58 - phase)"""
+    cpus = get_cpu_socket_pcie(db)
+    mbs = get_mb_socket_pcie(db)
+    if not cpus or not mbs:
+        return None, None, None
+    cpu_names = [c["name"] for c in cpus]
+    mb_names = [m["name"] for m in mbs]
+    matrix_cpu_mb = []
+    for cpu in cpus:
+        row = []
+        tdp = cpu["tdp"]
+        if tdp == 0:
+            row = [None] * len(mbs)
+            matrix_cpu_mb.append(row)
+            continue
+        for mb in mbs:
+            if cpu["socket"] != mb["socket"]:
+                row.append(None)
+                continue
+            phase = mb["phase"]
+            if phase == 0:
+                row.append(None)
+                continue
+            diff = abs(tdp/32.5*10.58 - phase*32.5/10.58)
+            if diff == 0:
+                val = 1
+            else:
+                val = (1.0 / diff) ** (1 / 2)
+            row.append(val)
+        matrix_cpu_mb.append(row)
+    return cpu_names, mb_names, matrix_cpu_mb
+
+
 # --- Рендеринг ---
 def render(db: Session):
-    tabs = st.tabs(["📊 Benefit (модели)", "🎯 Оптимальность (модели)", "🔗 Кривая подбора (модели)"])
+    tabs = st.tabs([
+        "📊 Benefit CPU × GPU",
+        "🎯 Оптимальность CPU и GPU",
+        "🔗 Кривая подбора CPU и GPU",
+        "📊 Benefit CPU × MB",
+        "⚡ Power CPU и MB"
+    ])
 
-    # Benefit
+    # Benefit CPU × GPU
     with tabs[0]:
         cpu_names, gpu_names, raw_mat = compute_heatmap_benefit(db)
         if cpu_names is None:
-            st.warning("Недостаточно данных для Benefit (модели).")
+            st.warning("Недостаточно данных для Benefit (CPU × GPU).")
         else:
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
@@ -157,28 +335,54 @@ def render(db: Session):
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
-    # Оптимальность
+    # Оптимальность CPU и GPU
     with tabs[1]:
         cpu_names, gpu_names, raw_mat = compute_heatmap_optimal(db)
         if cpu_names is None:
-            st.warning("Недостаточно данных для Оптимальности (модели).")
+            st.warning("Недостаточно данных для Оптимальности (CPU × GPU).")
         else:
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
                             labels=dict(x="GPU (чип)", y="CPU (модель)", color="Оптимальность (норм.)"),
-                            title="Тепловая карта: 1/|Score_CPU×1.25 - Score_GPU|",
+                            title="Тепловая карта: (1/|Score_CPU×1.25 - Score_GPU|)¹/ᵉ",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
-    # Кривая подбора
+    # Кривая подбора CPU и GPU
     with tabs[2]:
         cpu_names, gpu_names, raw_mat = compute_heatmap_combined(db)
         if cpu_names is None:
-            st.warning("Недостаточно данных для Кривой подбора (модели).")
+            st.warning("Недостаточно данных для Кривой подбора (CPU × GPU).")
         else:
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
                             labels=dict(x="GPU (чип)", y="CPU (модель)", color="Кривая (норм.)"),
-                            title="Тепловая карта: (Benefit × Динамика × Оптимальность)⅓",
+                            title="Тепловая карта: (Benefit × Оптимальность)¹/²",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    # Benefit CPU × MB (только сокет)
+    with tabs[3]:
+        cpu_names, mb_names, raw_mat = compute_heatmap_cpu_mb_benefit(db)
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Benefit (CPU × MB). Убедитесь, что у CPU и MB заполнен сокет.")
+        else:
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=mb_names, y=cpu_names,
+                            labels=dict(x="Motherboard", y="CPU (модель)", color="Benefit (норм.)"),
+                            title="Тепловая карта: Benefit_CPU × Benefit_MB (совместимые по сокету)",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    # Power CPU и MB
+    with tabs[4]:
+        cpu_names, mb_names, raw_mat = compute_heatmap_power(db)
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Power (CPU × MB). Убедитесь, что у CPU указан TDP, а у MB – количество фаз питания.")
+        else:
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=mb_names, y=cpu_names,
+                            labels=dict(x="Motherboard", y="CPU (модель)", color="Power (норм.)"),
+                            title="Тепловая карта: 1/|TDP/10.58 - Phase| (совместимые по сокету)",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')

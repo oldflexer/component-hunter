@@ -43,20 +43,26 @@ def get_delta_ratio(db: Session, product_id: int, days: int = 7) -> float:
 
 
 def normalize_matrix(matrix):
-    """
-    Нормализует матрицу значений в диапазон [0,1].
-    Значения inf заменяются на 1.0.
-    """
-    flat = [val for row in matrix for val in row if val != float('inf') and not pd.isna(val)]
+    # Собираем все числовые значения (игнорируем None, inf, NaN)
+    flat = []
+    for row in matrix:
+        for val in row:
+            if val is not None and val != float('inf') and not pd.isna(val):
+                flat.append(val)
     if not flat:
+        # Нет данных – все ячейки серые (0.5)
         return [[0.5] * len(matrix[0]) for _ in range(len(matrix))]
     min_val = min(flat)
     max_val = max(flat)
     if max_val == min_val:
         return [[0.5] * len(row) for row in matrix]
-    norm = [[(val - min_val) / (max_val - min_val) for val in row] for row in matrix]
-    for i in range(len(norm)):
-        for j in range(len(norm[i])):
-            if matrix[i][j] == float('inf'):
-                norm[i][j] = 1.0
+    norm = []
+    for row in matrix:
+        norm_row = []
+        for val in row:
+            if val is None or val == float('inf') or pd.isna(val):
+                norm_row.append(None)   # → белая ячейка (plotly не рисует)
+            else:
+                norm_row.append((val - min_val) / (max_val - min_val))
+        norm.append(norm_row)
     return norm

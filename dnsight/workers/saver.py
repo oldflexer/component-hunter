@@ -67,27 +67,17 @@ def calculate_motherboard_score(specs: Dict[str, str]) -> Optional[float]:
         numbers = re.findall(r'\d+', value)
         return sum(int(n) for n in numbers) if numbers else 1
 
-    slots_raw = specs.get("Количество слотов памяти")
-    slots = int(extract_number(slots_raw)) if slots_raw else 1
-
     channels_raw = specs.get("Количество каналов памяти")
     channels = int(extract_number(channels_raw)) if channels_raw else 1
-
-    max_ram_raw = specs.get("Максимальный объем памяти")
-    max_ram = extract_number(max_ram_raw) if max_ram_raw else 1.0
 
     freq_raw = specs.get("Максимальная частота памяти (JEDEC / без разгона)")
     freq = extract_number(freq_raw) if freq_raw else 1.0
 
-    pcie_raw = specs.get("Версия PCI Express")
-    pcie = extract_number(pcie_raw) if pcie_raw else 1.0
-
     phases_raw = specs.get("Количество фаз питания")
     phases = sum_phases(phases_raw) if phases_raw else 1
 
-    score = slots * channels * max_ram * freq * pcie * phases
-    logger.info(f"Вычислен скор для MB: {score} (слоты={slots}, каналы={channels}, "
-                f"max_ram={max_ram}, частота={freq}, PCIe={pcie}, фазы={phases})")
+    score = channels * freq * phases
+    logger.info(f"Вычислен скор для MB: {score} (каналы={channels}, частота={freq}, фазы={phases})")
     return score
 
 def save_product_and_attributes(

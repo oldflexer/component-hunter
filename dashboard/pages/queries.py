@@ -53,25 +53,36 @@ def build_mb_table(db: Session):
     products = db.query(Product).filter_by(type_id=type_obj.id).all()
     data = []
     for prod in products:
-        # Получаем название модели из атрибутов
-        attrs = db.query(AttributeValue).filter_by(product_id=prod.id).all()
-        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
-        model_name = attr_dict.get("Модель", "")
+        model = db.query(Model).filter_by(id=prod.model_id).first() if prod.model_id else None
+        if model:
+            model_name = model.name
+            score = get_last_score(db, model.id)
+        else:
+            attrs = db.query(AttributeValue).filter_by(product_id=prod.id).all()
+            attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+            model_name = attr_dict.get("Модель", "")
+            score = None
+
         price = get_last_price(db, prod.id)
         if price is None:
             continue
+        benefit = get_last_benefit(db, prod.id) or 0.0
         data.append({
             "product_name": prod.name,
             "model_name": model_name,
+            "score": score if score else 0,
             "price": price,
+            "benefit": benefit,
         })
     if not data:
         st.info("Нет данных для Motherboard.")
         return
 
     df = pd.DataFrame(data)
-    df = df.sort_values(by="price", ascending=True)
-    st.dataframe(df[["product_name", "model_name", "price"]], width='stretch', height=600)
+    max_benefit = df['benefit'].max()
+    df['benefit %'] = (df['benefit'] / max_benefit * 100).round(1) if max_benefit > 0 else 0
+    df = df.sort_values(by="benefit", ascending=False)
+    st.dataframe(df[["product_name", "model_name", "score", "price", "benefit", "benefit %"]], width='stretch', height=600)
 
 
 def render(db: Session):

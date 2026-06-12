@@ -30,7 +30,7 @@ def get_daily_averages(db: Session, component_type: str):
     else:
         avg_price = pd.DataFrame(columns=["date", "avg_price"])
 
-    # Средний балл PassMark
+    # Средний балл
     model_ids = [p.model_id for p in products if p.model_id is not None]
     scores = db.query(ModelScore).filter(ModelScore.model_id.in_(model_ids)).all()
     df_score = pd.DataFrame([(s.updated_at.date(), s.score) for s in scores], columns=["date", "score"])
@@ -69,8 +69,11 @@ def plot_trends(db: Session, component_type: str):
             st.info("Нет данных о ценах")
     with col2:
         if not avg_score.empty:
+            title = f"Средний балл {component_type}"
+            if component_type == "Motherboard":
+                title += " (расчётный)"
             fig = px.line(avg_score, x="date", y="avg_score",
-                          title=f"Средний балл PassMark {component_type}",
+                          title=title,
                           labels={"avg_score": "баллы", "date": "Дата"})
             st.plotly_chart(fig, width='stretch', height=600)
         else:
@@ -85,30 +88,6 @@ def plot_trends(db: Session, component_type: str):
             st.info("Нет данных о Benefit")
 
 
-def plot_mb_price_trend(db: Session):
-    type_id = get_type_id(db, "Motherboard")
-    if type_id is None:
-        st.info("Нет данных для Motherboard")
-        return
-    products = db.query(Product).filter_by(type_id=type_id).all()
-    product_ids = [p.id for p in products]
-    if not product_ids:
-        st.info("Нет продуктов типа Motherboard")
-        return
-
-    prices = db.query(PriceHistory).filter(PriceHistory.product_id.in_(product_ids)).all()
-    df_price = pd.DataFrame([(p.timestamp.date(), p.price) for p in prices], columns=["date", "price"])
-    if not df_price.empty:
-        avg_price = df_price.groupby("date")["price"].mean().reset_index()
-        avg_price.columns = ["date", "avg_price"]
-        fig = px.line(avg_price, x="date", y="avg_price",
-                      title="Средняя цена Motherboard",
-                      labels={"avg_price": "₽", "date": "Дата"})
-        st.plotly_chart(fig, width='stretch', height=600)
-    else:
-        st.info("Нет данных о ценах")
-
-
 def render(db: Session):
     cpu_tab, gpu_tab, mb_tab = st.tabs(["CPU", "GPU", "Motherboard"])
     with cpu_tab:
@@ -116,4 +95,4 @@ def render(db: Session):
     with gpu_tab:
         plot_trends(db, "GPU")
     with mb_tab:
-        plot_mb_price_trend(db)
+        plot_trends(db, "Motherboard")

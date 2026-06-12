@@ -64,7 +64,7 @@ def plot_product_history(db: Session, component_type: str):
             st.info("Нет данных о Benefit за последние 30 дней")
 
 
-def plot_mb_price_history(db: Session):
+def plot_mb_history(db: Session):
     type_obj = db.query(ProductType).filter_by(name="Motherboard").first()
     if not type_obj:
         st.warning("Нет данных для Motherboard")
@@ -77,19 +77,49 @@ def plot_mb_price_history(db: Session):
     product_options = {p.name: p.id for p in products}
     selected_name = st.selectbox("Выберите материнскую плату", list(product_options.keys()), key="select_mb")
     selected_id = product_options[selected_name]
+    selected_product = next(p for p in products if p.id == selected_id)
 
     thirty_days_ago = datetime.now() - timedelta(days=30)
+
     prices = db.query(PriceHistory).filter(
         PriceHistory.product_id == selected_id,
         PriceHistory.timestamp >= thirty_days_ago
     ).order_by(PriceHistory.timestamp).all()
     df_price = pd.DataFrame([(p.timestamp, p.price) for p in prices], columns=["date", "price"])
 
-    if not df_price.empty:
-        fig = px.line(df_price, x="date", y="price", title="Цена", labels={"price": "₽"})
-        st.plotly_chart(fig, width='stretch', height=600)
-    else:
-        st.info("Нет данных о ценах за последние 30 дней")
+    scores = []
+    if selected_product.model_id:
+        scores = db.query(ModelScore).filter(
+            ModelScore.model_id == selected_product.model_id,
+            ModelScore.updated_at >= thirty_days_ago
+        ).order_by(ModelScore.updated_at).all()
+    df_score = pd.DataFrame([(s.updated_at, s.score) for s in scores], columns=["date", "score"])
+
+    benefits = db.query(BenefitHistory).filter(
+        BenefitHistory.product_id == selected_id,
+        BenefitHistory.timestamp >= thirty_days_ago
+    ).order_by(BenefitHistory.timestamp).all()
+    df_benefit = pd.DataFrame([(b.timestamp, b.benefit) for b in benefits], columns=["date", "benefit"])
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if not df_price.empty:
+            fig = px.line(df_price, x="date", y="price", title="Цена", labels={"price": "₽"})
+            st.plotly_chart(fig, width='stretch', height=600)
+        else:
+            st.info("Нет данных о ценах за последние 30 дней")
+    with col2:
+        if not df_score.empty:
+            fig = px.line(df_score, x="date", y="score", title="PassMark Score (расчётный)", labels={"score": "баллы"})
+            st.plotly_chart(fig, width='stretch', height=600)
+        else:
+            st.info("Нет данных о скорах за последние 30 дней")
+    with col3:
+        if not df_benefit.empty:
+            fig = px.line(df_benefit, x="date", y="benefit", title="Benefit", labels={"benefit": "Benefit"})
+            st.plotly_chart(fig, width='stretch', height=600)
+        else:
+            st.info("Нет данных о Benefit за последние 30 дней")
 
 
 def render(db: Session):
@@ -99,4 +129,4 @@ def render(db: Session):
     with gpu_tab:
         plot_product_history(db, "GPU")
     with mb_tab:
-        plot_mb_price_history(db)
+        plot_mb_history(db)
