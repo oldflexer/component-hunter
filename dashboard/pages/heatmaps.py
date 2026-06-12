@@ -126,7 +126,6 @@ def get_cpu_socket_pcie(db: Session):
             "pcie": pcie,
             "tdp": tdp,
         })
-    # Группировка по сокету, внутри по score
     socket_max_score = {}
     for cpu in cpu_list:
         s = cpu["socket"]
@@ -178,7 +177,6 @@ def get_mb_socket_pcie(db: Session):
             "pcie": pcie,
             "phase": phase,
         })
-    # Сортируем по порядку сокетов из CPU
     cpu_sorted = get_cpu_socket_pcie(db)
     socket_order = {}
     for cpu in cpu_sorted:
@@ -230,13 +228,13 @@ def compute_heatmap_optimal(db: Session):
                 val = 0.0
             else:
                 diff = abs(target - gpu_score)
-                val = (1 / diff) ** (1 / 2) if diff != 0 else float('inf')
+                val = (1 / diff) ** (1/2) if diff != 0 else float('inf')
             row.append(val)
         matrix.append(row)
     return cpu_names, gpu_names, matrix
 
 
-# @st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_combined(db: Session):
     res_benefit = compute_heatmap_benefit(db)
     res_optimal = compute_heatmap_optimal(db)
@@ -251,21 +249,20 @@ def compute_heatmap_combined(db: Session):
     for i in range(len(cpu_names)):
         row = []
         for j in range(len(gpu_names)):
-            row.append((benefit_mat[i][j] * optimal_mat[i][j]) ** (1 / 2))
+            row.append((benefit_mat[i][j] * optimal_mat[i][j]) ** (1/2))
         combined.append(row)
     return cpu_names, gpu_names, combined
 
 
 @st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_cpu_mb_benefit(db: Session):
-    """Benefit CPU × MB (только сокет, без PCI‑E)"""
     cpus = get_cpu_socket_pcie(db)
     mbs = get_mb_socket_pcie(db)
     if not cpus or not mbs:
         return None, None, None
     cpu_names = [c["name"] for c in cpus]
     mb_names = [m["name"] for m in mbs]
-    matrix_cpu_mb = []
+    matrix = []
     for cpu in cpus:
         row = []
         for mb in mbs:
@@ -273,26 +270,25 @@ def compute_heatmap_cpu_mb_benefit(db: Session):
                 row.append(cpu["benefit"] * mb["benefit"])
             else:
                 row.append(None)
-        matrix_cpu_mb.append(row)
-    return cpu_names, mb_names, matrix_cpu_mb
+        matrix.append(row)
+    return cpu_names, mb_names, matrix
 
 
 @st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
 def compute_heatmap_power(db: Session):
-    """Тепловая карта Power: 1/abs(TDP/10.58 - phase)"""
     cpus = get_cpu_socket_pcie(db)
     mbs = get_mb_socket_pcie(db)
     if not cpus or not mbs:
         return None, None, None
     cpu_names = [c["name"] for c in cpus]
     mb_names = [m["name"] for m in mbs]
-    matrix_cpu_mb = []
+    matrix = []
     for cpu in cpus:
         row = []
         tdp = cpu["tdp"]
         if tdp == 0:
             row = [None] * len(mbs)
-            matrix_cpu_mb.append(row)
+            matrix.append(row)
             continue
         for mb in mbs:
             if cpu["socket"] != mb["socket"]:
@@ -302,14 +298,49 @@ def compute_heatmap_power(db: Session):
             if phase == 0:
                 row.append(None)
                 continue
-            diff = abs(tdp/32.5*10.58 - phase*32.5/10.58)
+            diff = abs((tdp / 10.58 - phase) ** (1 / 2))
             if diff == 0:
                 val = 1
             else:
                 val = (1.0 / diff) ** (1 / 2)
             row.append(val)
-        matrix_cpu_mb.append(row)
-    return cpu_names, mb_names, matrix_cpu_mb
+        matrix.append(row)
+    return cpu_names, mb_names, matrix
+
+
+@st.cache_data(ttl=3600, hash_funcs={Session: lambda _: None})
+def compute_heatmap_combined_cpu_mb(db: Session):
+    """Кривая подбора CPU×MB = sqrt(Benefit_CPU_MB * Power_CPU_MB)"""
+    result_benefit = compute_heatmap_cpu_mb_benefit(db)
+    result_power = compute_heatmap_power(db)
+    if result_benefit is None or result_power is None:
+        return None, None, None
+    cpu_names_benefit, mb_names_benefit, benefit_mat = result_benefit
+    cpu_names_power, mb_names_power, power_mat = result_power
+    if (cpu_names_benefit is None or cpu_names_power is None or
+        mb_names_benefit is None or mb_names_power is None):
+        return None, None, None
+    # Проверка, что матрицы существуют и не являются None
+    if benefit_mat is None or power_mat is None:
+        return None, None, None
+    # Проверка, что матрицы не пустые
+    if not benefit_mat or not power_mat:
+        return None, None, None
+    # Проверка совпадения размеров
+    if len(benefit_mat) != len(power_mat) or (len(benefit_mat) > 0 and len(benefit_mat[0]) != len(power_mat[0])):
+        return None, None, None
+    combined = []
+    for i in range(len(benefit_mat)):
+        row = []
+        for j in range(len(benefit_mat[0])):
+            b = benefit_mat[i][j]
+            p = power_mat[i][j]
+            if b is None or p is None:
+                row.append(None)
+            else:
+                row.append((b * p) ** (1 / 1))
+        combined.append(row)
+    return cpu_names_benefit, mb_names_benefit, combined
 
 
 # --- Рендеринг ---
@@ -319,7 +350,8 @@ def render(db: Session):
         "🎯 Оптимальность CPU и GPU",
         "🔗 Кривая подбора CPU и GPU",
         "📊 Benefit CPU × MB",
-        "⚡ Power CPU и MB"
+        "⚡ Power CPU и MB",
+        "🔗 Кривая подбора CPU и MB"
     ])
 
     # Benefit CPU × GPU
@@ -344,7 +376,7 @@ def render(db: Session):
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
                             labels=dict(x="GPU (чип)", y="CPU (модель)", color="Оптимальность (норм.)"),
-                            title="Тепловая карта: (1/|Score_CPU×1.25 - Score_GPU|)¹/ᵉ",
+                            title="Тепловая карта: (1/|Score_CPU×1.25 - Score_GPU|)¹/²",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
@@ -357,11 +389,11 @@ def render(db: Session):
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=gpu_names, y=cpu_names,
                             labels=dict(x="GPU (чип)", y="CPU (модель)", color="Кривая (норм.)"),
-                            title="Тепловая карта: (Benefit × Оптимальность)¹/²",
+                            title="Тепловая карта: √(Benefit × Оптимальность)",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
 
-    # Benefit CPU × MB (только сокет)
+    # Benefit CPU × MB
     with tabs[3]:
         cpu_names, mb_names, raw_mat = compute_heatmap_cpu_mb_benefit(db)
         if cpu_names is None:
@@ -383,6 +415,19 @@ def render(db: Session):
             norm_mat = normalize_matrix(raw_mat)
             fig = px.imshow(norm_mat, x=mb_names, y=cpu_names,
                             labels=dict(x="Motherboard", y="CPU (модель)", color="Power (норм.)"),
-                            title="Тепловая карта: 1/|TDP/10.58 - Phase| (совместимые по сокету)",
+                            title="Тепловая карта: √( 1 / √(|TDP·10.58/32.5 - Phase·32.5/10.58|) )",
+                            color_continuous_scale="Plasma", aspect="auto", height=4800)
+            st.plotly_chart(fig, width='stretch')
+
+    # Кривая подбора CPU и MB
+    with tabs[5]:
+        cpu_names, mb_names, raw_mat = compute_heatmap_combined_cpu_mb(db)
+        if cpu_names is None:
+            st.warning("Недостаточно данных для Кривой подбора (CPU × MB). Убедитесь, что доступны данные Benefit и Power.")
+        else:
+            norm_mat = normalize_matrix(raw_mat)
+            fig = px.imshow(norm_mat, x=mb_names, y=cpu_names,
+                            labels=dict(x="Motherboard", y="CPU (модель)", color="Кривая (норм.)"),
+                            title="Тепловая карта: √(Benefit_CPU_MB × Power_CPU_MB)",
                             color_continuous_scale="Plasma", aspect="auto", height=4800)
             st.plotly_chart(fig, width='stretch')
