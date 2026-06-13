@@ -1,3 +1,5 @@
+# settings.py
+from enum import Enum
 import os
 from dotenv import load_dotenv
 
@@ -25,3 +27,53 @@ DNS_CATEGORIES = {
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 5
 RETRY_DELAY = 5
+
+
+class ComponentType(str, Enum):
+    CPU = "CPU"
+    GPU = "GPU"
+    MOTHERBOARD = "Motherboard"
+    RAM = "RAM"
+    PSU = "PSU"
+    CASE = "Case"
+    COOLER = "Cooler"
+    STORAGE = "Storage"
+
+# Коэффициенты подбора
+GPU_TARGET_MULTIPLIER = 1.25   # Score_CPU * 1.25 = целевой Score_GPU
+
+# Кэширование
+CACHE_TTL = 3600  # 1 час
+
+# Динамика
+DEFAULT_DAYS_BACK = 7
+
+# Формулы расчёта скора материнской платы (весовые коэффициенты)
+MB_SCORE_WEIGHTS = {
+    "slots": 1.0,
+    "channels": 1.0,
+    "max_ram": 1.0,
+    "freq": 1.0,
+    "pcie": 1.0,
+    "phases": 1.0
+}
+
+# Оптимальное соотношение TDP / Phase (используется в тепловой карте Power)
+TDP_PHASE_RATIO = 10.58
+
+# Конфигурация для дашборда
+CATEGORY_MAPPING = {
+    "cpu": "CPU",
+    "gpu": "GPU",
+    "motherboard": "Motherboard",
+    "ram_dimm": "RAM",
+    "ram_sodimm": "RAM",
+    "psu": "PSU",
+    "case": "Case",
+    "cooler": "Cooler",
+    "lcs": "Cooler",
+    "ssd": "Storage",
+    "ssdm2": "Storage",
+    "hdd35": "Storage",
+    "hdd25": "Storage",
+}

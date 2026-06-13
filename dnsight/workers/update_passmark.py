@@ -16,15 +16,16 @@ from ..core.models import ProductType, Model, ModelScore, Product, Attribute, At
 from ..core.logging import get_logger
 from ..parsers.passmark import PassMarkParser
 from ..calculators.benefit import update_benefit_for_product
+from config.attributes import ATTR_GPU_CHIP
 
 logger = get_logger("passmark_updater", "logs/passmark_updater.log", mode='w')
 
 
+
 def get_gpu_attribute_id(db: Session) -> int:
-    """Возвращает id атрибута 'Графический процессор'."""
-    attr = db.query(Attribute).filter_by(name="Графический процессор").first()
+    attr = db.query(Attribute).filter_by(name=ATTR_GPU_CHIP).first()
     if not attr:
-        raise ValueError("Атрибут 'Графический процессор' не найден. Запустите парсинг DNS для GPU.")
+        raise ValueError(f"Атрибут '{ATTR_GPU_CHIP}' не найден. Запустите парсинг DNS для GPU.")
     return attr.id
 
 
