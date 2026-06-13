@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
-from dnsight.core.models import ProductType, Product, Model, PriceHistory, ModelScore, BenefitHistory
+from dnsight.core.models import ProductType, Product, PriceHistory, ModelScore, BenefitHistory
 from dashboard.utils import get_last_benefit, get_last_score
 
 
@@ -83,30 +83,9 @@ def get_current_and_prev_avg(db: Session, component_type: str, days_ago: int = 7
     }
 
 
-def get_top_benefit(db: Session, component_type: str, top_n: int = 3):
-    type_obj = db.query(ProductType).filter_by(name=component_type).first()
-    if not type_obj:
-        return []
-    products = db.query(Product).filter_by(type_id=type_obj.id).all()
-    items = []
-    for prod in products:
-        if prod.model_id is None:
-            continue
-        benefit = get_last_benefit(db, prod.id)
-        if benefit is None or benefit <= 0:
-            continue
-        items.append({
-            "name": prod.name,
-            "model": prod.model.name if prod.model else "—",
-            "benefit": benefit
-        })
-    items.sort(key=lambda x: x["benefit"], reverse=True)
-    return items[:top_n]
-
-
 def render(db: Session):
     st.header("📈 Общая сводка")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.subheader("🔲 CPU")
@@ -116,19 +95,11 @@ def render(db: Session):
                       delta=f"{stats['price_now'] - stats['price_prev']:.0f}",
                       delta_color="inverse")
             st.metric("Средний балл PassMark", f"{stats['score_now']:.0f}",
-                      delta=f"{stats['score_now'] - stats['score_prev']:.0f}",)
+                      delta=f"{stats['score_now'] - stats['score_prev']:.0f}")
             st.metric("Средний Benefit", f"{stats['benefit_now']:.4f}",
                       delta=f"{stats['benefit_now'] - stats['benefit_prev']:.4f}")
         else:
             st.info("Нет данных по CPU")
-
-        st.subheader("🏆 Топ-3 CPU по Benefit")
-        top = get_top_benefit(db, "CPU")
-        if top:
-            for i, item in enumerate(top, 1):
-                st.write(f"{i}. **{item['name']}** – Benefit {item['benefit']:.4f}")
-        else:
-            st.info("Нет данных")
 
     with col2:
         st.subheader("🎮 GPU")
@@ -144,10 +115,16 @@ def render(db: Session):
         else:
             st.info("Нет данных по GPU")
 
-        st.subheader("🏆 Топ-3 GPU по Benefit")
-        top = get_top_benefit(db, "GPU")
-        if top:
-            for i, item in enumerate(top, 1):
-                st.write(f"{i}. **{item['name']}** – Benefit {item['benefit']:.4f}")
+    with col3:
+        st.subheader("🖥 Motherboard")
+        stats = get_current_and_prev_avg(db, "Motherboard")
+        if stats:
+            st.metric("Средняя цена (₽)", f"{stats['price_now']:.0f}",
+                      delta=f"{stats['price_now'] - stats['price_prev']:.0f}",
+                      delta_color="inverse")
+            st.metric("Средний балл (расчётный)", f"{stats['score_now']:.0f}",
+                      delta=f"{stats['score_now'] - stats['score_prev']:.0f}")
+            st.metric("Средний Benefit", f"{stats['benefit_now']:.4f}",
+                      delta=f"{stats['benefit_now'] - stats['benefit_prev']:.4f}")
         else:
-            st.info("Нет данных")
+            st.info("Нет данных по Motherboard")

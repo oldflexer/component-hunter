@@ -86,7 +86,7 @@ with st.sidebar:
          "Графики",
          "Аналитика",
          "Запросы",
-         "Подбор CPU/GPU",
+         "Подбор компонентов",
          "Тепловые карты",
          "ПК-подбор"],
         index=0
@@ -109,7 +109,7 @@ elif selected_page == "Аналитика":
     analytics.render(db)
 elif selected_page == "Запросы":
     queries.render(db)
-elif selected_page == "Подбор CPU/GPU":
+elif selected_page == "Подбор компонентов":
     selection.render(db)
 elif selected_page == "Тепловые карты":
     heatmaps.render(db)

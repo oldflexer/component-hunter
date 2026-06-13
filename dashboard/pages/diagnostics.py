@@ -153,6 +153,20 @@ def render(db: Session):
             else:
                 st.success("✅ Motherboard – без характеристик: проблем нет!")
 
+            # Без баллов (для MB)
+            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
+            products_no_scores = db.query(Product).filter(
+                Product.type_id == type_mb.id,
+                Product.model_id.isnot(None),
+                Product.model_id.notin_(model_ids_with_scores)
+            ).all()
+            if products_no_scores:
+                df = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url)
+                                   for p in products_no_scores], columns=["ID", "Name", "Model Name", "URL"])
+                render_problem_table(db, "Motherboard – без баллов", df, [p.id for p in products_no_scores], "mb_no_scores")
+            else:
+                st.success("✅ Motherboard – без баллов: проблем нет!")
+
             # Без цены
             product_ids_with_price = [row[0] for row in db.query(PriceHistory.product_id).distinct().all()]
             products_no_price = db.query(Product).filter(

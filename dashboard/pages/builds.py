@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import re
+import math
 from sqlalchemy.orm import Session
 from dnsight.core.models import ProductType, Model, Product, Attribute, AttributeValue, PriceHistory
 from dashboard.utils import get_last_score, get_last_benefit, get_delta_ratio, get_last_price
@@ -29,33 +31,96 @@ def get_best_gpu_price_for_raw(db: Session, raw_value: str) -> float:
     return min(prices) if prices else 0.0
 
 
-def get_cpu_socket_and_pcie(db: Session, model_id: int):
-    product = db.query(Product).filter_by(model_id=model_id).first()
-    if not product:
-        return None, None
-    attrs = db.query(AttributeValue).filter_by(product_id=product.id).all()
-    attr_dict = {av.attribute.name: av.raw_value for av in attrs}
-    socket = attr_dict.get("Сокет")
-    pcie = attr_dict.get("Встроенный контроллер PCI Express")
-    return socket, pcie
-
-
-def get_mb_socket_and_pcie(db: Session, product_id: int):
-    attrs = db.query(AttributeValue).filter_by(product_id=product_id).all()
-    attr_dict = {av.attribute.name: av.raw_value for av in attrs}
-    socket = attr_dict.get("Сокет")
-    pcie = attr_dict.get("Версия PCI Express")
-    return socket, pcie
-
-
-def extract_pcie_version(pcie_str: str) -> str:
-    """Извлекает число из строки типа 'PCIe 4.0' -> '4.0' или возвращает пустую строку."""
+def extract_pcie_version(pcie_str: str) -> float:
     if not pcie_str:
-        return ""
-    # Ищем цифры с точкой, например 4.0, 3.0
-    import re
-    match = re.search(r'(\d+\.\d+)', pcie_str)
-    return match.group(1) if match else pcie_str
+        return 0.0
+    match = re.search(r'(\d+\.?\d*)', pcie_str)
+    return float(match.group(1)) if match else 0.0
+
+
+def extract_first_number(value: str) -> int:
+    match = re.search(r'\d+', value)
+    return int(match.group()) if match else 0
+
+
+def extract_tdp(value: str) -> int:
+    match = re.search(r'\d+', value)
+    return int(match.group()) if match else 0
+
+
+def get_cpu_socket_data(db: Session):
+    cpu_type = db.query(ProductType).filter_by(name="CPU").first()
+    if not cpu_type:
+        return []
+    cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
+    result = []
+    for model in cpu_models:
+        score = get_last_score(db, model.id)
+        if score is None:
+            continue
+        product = db.query(Product).filter_by(model_id=model.id).first()
+        if not product:
+            continue
+        benefit = get_last_benefit(db, product.id) or 0.0
+        attrs = db.query(AttributeValue).filter_by(product_id=product.id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+        socket = attr_dict.get("Сокет")
+        tdp_raw = attr_dict.get("Тепловыделение (TDP)")
+        tdp = extract_tdp(tdp_raw) if tdp_raw else 0
+        if not socket:
+            continue
+        result.append({
+            "name": model.name,
+            "benefit": benefit,
+            "socket": socket.strip(),
+            "tdp": tdp,
+        })
+    return result
+
+
+def get_mb_socket_data(db: Session):
+    mb_type = db.query(ProductType).filter_by(name="Motherboard").first()
+    if not mb_type:
+        return []
+    mb_products = db.query(Product).filter_by(type_id=mb_type.id).all()
+    result = []
+    for prod in mb_products:
+        benefit = get_last_benefit(db, prod.id) or 0.0
+        attrs = db.query(AttributeValue).filter_by(product_id=prod.id).all()
+        attr_dict = {av.attribute.name: av.raw_value for av in attrs}
+        socket = attr_dict.get("Сокет")
+        phase_raw = attr_dict.get("Количество фаз питания")
+        phase = extract_first_number(phase_raw) if phase_raw else 0
+        if not socket:
+            continue
+        display_name = None
+        if prod.model_id:
+            model = db.query(Model).filter_by(id=prod.model_id).first()
+            if model:
+                display_name = model.name
+        if not display_name:
+            display_name = attr_dict.get("Модель")
+        if not display_name:
+            display_name = prod.name
+        result.append({
+            "name": display_name,
+            "benefit": benefit,
+            "socket": socket.strip(),
+            "phase": phase,
+        })
+    return result
+
+
+def calculate_combined_cpu_mb(cpu_benefit, mb_benefit, cpu_tdp, mb_phase):
+    if cpu_tdp == 0 or mb_phase == 0:
+        return 0.0
+    diff = abs(cpu_tdp / 10.58 - mb_phase)
+    if diff == 0:
+        power = 1e9
+    else:
+        power = (1.0 / diff) ** 0.5
+    combined = (cpu_benefit * mb_benefit * power) ** 0.5
+    return combined
 
 
 def render_cpu_gpu_tab(db: Session):
@@ -64,6 +129,8 @@ def render_cpu_gpu_tab(db: Session):
     Для каждого процессора показаны **три лучшие видеокарты** по комбинированной оценке **Combined** (кривая подбора).
     Комбинированная оценка учитывает Benefit, динамику Benefit и оптимальность производительности.
     """)
+    # Чекбокс для будущего использования
+    st.checkbox("Учитывать версию PCI-E (в разработке)", key="use_pcie_gpu", value=False)
 
     cpu_type = db.query(ProductType).filter_by(name="CPU").first()
     gpu_type = db.query(ProductType).filter_by(name="GPU").first()
@@ -138,7 +205,6 @@ def render_cpu_gpu_tab(db: Session):
         st.info("Нет данных о GPU с баллами PassMark и ценой.")
         return
 
-    # Фильтры
     col1, col2 = st.columns(2)
     with col1:
         min_score = st.number_input("Минимальная сумма баллов CPU+GPU", min_value=0, value=0, step=1000)
@@ -208,110 +274,67 @@ def render_cpu_gpu_tab(db: Session):
 def render_cpu_mb_tab(db: Session):
     st.header("Подбор CPU + Motherboard")
     st.markdown("""
-    Подбор основан на совпадении сокета и совместимости версии PCI Express.
-    Версия PCIe материнской платы должна быть не ниже, чем у процессора.
+    Для каждого процессора показаны **три самые выгодные материнские платы** по комбинированной оценке **Combined** (кривая подбора CPU×MB).
+    Оценка учитывает Benefit CPU, Benefit MB и энергоэффективность (TDP vs фазы питания).
     """)
 
-    cpu_type = db.query(ProductType).filter_by(name="CPU").first()
-    mb_type = db.query(ProductType).filter_by(name="Motherboard").first()
-    if not cpu_type or not mb_type:
-        st.warning("Нет данных о CPU или Motherboard в базе.")
+    # Получаем данные CPU и MB
+    cpus = get_cpu_socket_data(db)
+    mbs = get_mb_socket_data(db)
+    if not cpus or not mbs:
+        st.info("Недостаточно данных для подбора (нет CPU или MB с сокетом).")
         return
 
-    cpu_models = db.query(Model).filter_by(type_id=cpu_type.id).all()
-    cpu_data = []
-    for model in cpu_models:
-        score = get_last_score(db, model.id)
-        if score is None:
-            continue
-        product = db.query(Product).filter_by(model_id=model.id).first()
-        if not product:
-            continue
-        price = get_last_price(db, product.id)
-        if price is None:
-            continue
-        socket, pcie = get_cpu_socket_and_pcie(db, model.id)
-        if not socket:
-            continue
-        pcie_ver = extract_pcie_version(pcie) if pcie else ""
-        cpu_data.append({
-            "name": model.name,
-            "price": price,
-            "socket": socket.strip(),
-            "pcie": pcie_ver,
-            "score": score,
-        })
+    # Группируем MB по сокету для быстрого доступа
+    mb_by_socket = {}
+    for mb in mbs:
+        socket = mb["socket"]
+        if socket not in mb_by_socket:
+            mb_by_socket[socket] = []
+        mb_by_socket[socket].append(mb)
 
-    mb_products = db.query(Product).filter_by(type_id=mb_type.id).all()
-    mb_data = []
-    for prod in mb_products:
-        price = get_last_price(db, prod.id)
-        if price is None:
+    # Для каждого CPU собираем совместимые MB и вычисляем Combined
+    all_pairs = []
+    for cpu in cpus:
+        socket = cpu["socket"]
+        if socket not in mb_by_socket:
             continue
-        socket, pcie = get_mb_socket_and_pcie(db, prod.id)
-        if not socket:
-            continue
-        pcie_ver = extract_pcie_version(pcie) if pcie else ""
-        mb_data.append({
-            "name": prod.name,
-            "price": price,
-            "socket": socket.strip(),
-            "pcie": pcie_ver,
-        })
-
-    if not cpu_data or not mb_data:
-        st.info("Недостаточно данных для подбора (нет CPU или MB с ценой и сокетом).")
-        return
-
-    col1, col2 = st.columns(2)
-    with col1:
-        min_cpu_score = st.number_input("Минимальный балл CPU", min_value=0, value=0, step=500)
-    with col2:
-        max_total_price = st.number_input("Максимальная сумма (₽)", min_value=0, value=200_000, step=10000)
-
-    pairs = []
-    for cpu in cpu_data:
-        if cpu["score"] < min_cpu_score:
-            continue
-        for mb in mb_data:
-            total_price = cpu["price"] + mb["price"]
-            if total_price > max_total_price:
-                continue
-            if cpu["socket"] != mb["socket"]:
-                continue
-            # Проверка совместимости PCIe: если версии указаны, то MB должна быть не ниже CPU
-            if cpu["pcie"] and mb["pcie"]:
-                try:
-                    cpu_ver = float(cpu["pcie"])
-                    mb_ver = float(mb["pcie"])
-                    if mb_ver < cpu_ver:
-                        continue
-                except ValueError:
-                    # Если не удалось преобразовать в число, пропускаем пару (или можно выводить, но лучше пропустить)
-                    continue
-            # Если версия не указана у одного из компонентов, пропускаем (чтобы не было ложной совместимости)
-            elif cpu["pcie"] or mb["pcie"]:
-                continue  # у одного есть версия, у другого нет – не совместимы
-            # Если у обоих нет версии – считаем совместимыми (можно оставить)
-            pairs.append({
+        for mb in mb_by_socket[socket]:
+            combined = calculate_combined_cpu_mb(cpu["benefit"], mb["benefit"], cpu["tdp"], mb["phase"])
+            all_pairs.append({
                 "CPU": cpu["name"],
                 "Motherboard": mb["name"],
-                "Сокет CPU": cpu["socket"],
-                "Сокет MB": mb["socket"],
-                "PCIe CPU": cpu["pcie"],
-                "PCIe MB": mb["pcie"],
-                "Цена CPU (₽)": cpu["price"],
-                "Цена MB (₽)": mb["price"],
-                "Сумма (₽)": total_price,
+                "Combined": combined,
+                "Benefit CPU": cpu["benefit"],
+                "Benefit MB": mb["benefit"],
+                "TDP": cpu["tdp"],
+                "Phase": mb["phase"],
+                "Socket": socket,
             })
 
-    if not pairs:
-        st.warning("Нет совместимых пар CPU+MB с заданными фильтрами.")
+    if not all_pairs:
+        st.warning("Нет совместимых пар CPU+MB.")
         return
 
-    df = pd.DataFrame(pairs)
-    st.subheader(f"Совместимые пары (всего {len(df)})")
-    st.dataframe(df, width='stretch')
+    # Группировка по CPU, выбор топ-3 по Combined
+    cpu_groups = {}
+    for pair in all_pairs:
+        cpu_name = pair["CPU"]
+        if cpu_name not in cpu_groups:
+            cpu_groups[cpu_name] = []
+        cpu_groups[cpu_name].append(pair)
+
+    top_pairs = []
+    for cpu_name, pairs in cpu_groups.items():
+        sorted_pairs = sorted(pairs, key=lambda x: x["Combined"], reverse=True)
+        top_pairs.extend(sorted_pairs[:3])
+
+    # Сортировка по убыванию Combined
+    top_pairs.sort(key=lambda x: x["Combined"], reverse=True)
+
+    df = pd.DataFrame(top_pairs)
+    st.subheader(f"Топ-3 материнские платы для каждого процессора (всего {len(df)} записей)")
+    st.dataframe(df[["CPU", "Motherboard", "Combined", "Benefit CPU", "Benefit MB", "TDP", "Phase", "Socket"]], width='stretch')
 
 
 def render(db: Session):
