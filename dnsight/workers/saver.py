@@ -54,7 +54,6 @@ def get_or_create_model(db: Session, model_name: str, type_id: int) -> Model:
     return model
 
 def calculate_motherboard_score(specs: Dict[str, str]) -> Optional[float]:
-    """Вычисляет скор материнской платы по характеристикам. Отсутствие атрибута → 1."""
     def extract_number(value: str) -> float:
         if not value:
             return 1.0
@@ -67,17 +66,27 @@ def calculate_motherboard_score(specs: Dict[str, str]) -> Optional[float]:
         numbers = re.findall(r'\d+', value)
         return sum(int(n) for n in numbers) if numbers else 1
 
-    channels_raw = specs.get("Количество каналов памяти")
-    channels = int(extract_number(channels_raw)) if channels_raw else 1
+    # Поиск ключа по вхождению подстроки
+    def find_key_contains(*substrings):
+        for key in specs.keys():
+            if all(sub in key for sub in substrings):
+                return key
+        return None
 
-    freq_raw = specs.get("Максимальная частота памяти (JEDEC / без разгона)")
-    freq = extract_number(freq_raw) if freq_raw else 1.0
+    channels_key = find_key_contains("Количество каналов памяти")
+    max_ram_key = find_key_contains("Максимальный объем памяти")
+    freq_key = find_key_contains("Максимальная частота памяти", "JEDEC")
+    pcie_key = find_key_contains("Версия PCI Express")
+    phases_key = find_key_contains("Количество фаз питания")
 
-    phases_raw = specs.get("Количество фаз питания")
-    phases = sum_phases(phases_raw) if phases_raw else 1
+    channels = int(extract_number(specs.get(channels_key))) if channels_key else 1
+    max_ram = extract_number(specs.get(max_ram_key)) if max_ram_key else 1.0
+    freq = extract_number(specs.get(freq_key)) if freq_key else 1.0
+    pcie = extract_number(specs.get(pcie_key)) if pcie_key else 1.0
+    phases = sum_phases(specs.get(phases_key)) if phases_key else 1
 
-    score = channels * freq * phases
-    logger.info(f"Вычислен скор для MB: {score} (каналы={channels}, частота={freq}, фазы={phases})")
+    score = (channels * max_ram * freq * pcie * phases) ** (1 / 2)
+    logger.info(f"Вычислен скор для MB: {score} (каналы={channels}, max_ram={max_ram}, частота={freq}, PCIe={pcie}, фазы={phases})")
     return score
 
 def save_product_and_attributes(
@@ -91,20 +100,14 @@ def save_product_and_attributes(
     prod_type = ensure_product_type(db, type_name)
     type_id_value = prod_type.id
 
-    # Определяем имя модели для CPU, GPU, Motherboard
     model_name = None
-    if type_name in ("CPU", "GPU", "Motherboard"):
-        if type_name == "GPU":
-            raw_model = specs.get("Графический процессор")
-            if raw_model:
-                model_name = normalize_gpu_model(raw_model)
-        elif type_name == "Motherboard":
-            model_name = specs.get("Модель")
-        else:  # CPU
-            model_name = specs.get("Модель") or product_name.split('[')[0].strip()
 
-        if not model_name:
-            model_name = product_name.split('[')[0].strip()
+    if type_name == "GPU":
+        raw_model = specs.get("Графический процессор")
+        if raw_model:
+            model_name = normalize_gpu_model(raw_model)
+
+    model_name = specs.get("Модель")
 
     model = None
     if model_name and type_name in ("CPU", "GPU", "Motherboard"):

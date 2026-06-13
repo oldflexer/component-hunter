@@ -1,7 +1,8 @@
 import streamlit as st
 from datetime import datetime
 from sqlalchemy.orm import Session
-from dnsight.core.models import ProductType, Product, Attribute, AttributeValue
+from dnsight.core.models import ProductType, Product, Attribute, AttributeValue, PriceHistory
+from dashboard.utils import get_last_price
 
 
 def edit_attributes(db: Session, component_type: str):
@@ -17,7 +18,27 @@ def edit_attributes(db: Session, component_type: str):
     product_names = {p.name: p.id for p in products}
     selected_name = st.selectbox(f"Выберите {component_type}", list(product_names.keys()))
     selected_id = product_names[selected_name]
+    product = db.query(Product).filter_by(id=selected_id).first()
 
+    # ----- Управление ценой -----
+    current_price = get_last_price(db, selected_id)
+    st.subheader("💰 Цена")
+    col_price1, col_price2 = st.columns(2)
+    with col_price1:
+        st.metric("Текущая цена (₽)", f"{current_price:.0f}" if current_price else "Нет данных")
+    with col_price2:
+        new_price = st.number_input("Новая цена (₽)", min_value=0.0, step=10.0, value=0.0, key=f"price_{component_type}_{selected_id}")
+        if new_price > 0 and new_price != current_price:
+            if st.checkbox("Добавить новую цену в историю", key=f"add_price_{component_type}_{selected_id}"):
+                price_history = PriceHistory(product_id=selected_id, price=new_price, timestamp=datetime.utcnow())
+                db.add(price_history)
+                db.commit()
+                st.success(f"Цена {new_price:.0f} ₽ добавлена в историю!")
+                st.rerun()
+        elif new_price == current_price and current_price is not None:
+            st.info("Новая цена совпадает с текущей, изменений не требуется.")
+
+    # ----- Редактирование характеристик -----
     attrs = db.query(AttributeValue).filter_by(product_id=selected_id).all()
     attr_dict = {av.attribute.name: av.raw_value for av in attrs}
 
@@ -44,7 +65,7 @@ def edit_attributes(db: Session, component_type: str):
         new_attr_name = st.text_input("Название нового атрибута (оставьте пустым, если не нужно)")
         new_attr_value = st.text_input("Значение нового атрибута") if new_attr_name else ""
 
-        submitted = st.form_submit_button("Сохранить изменения")
+        submitted = st.form_submit_button("Сохранить изменения характеристик")
         if submitted:
             try:
                 for attr_name, new_value in new_attrs.items():
