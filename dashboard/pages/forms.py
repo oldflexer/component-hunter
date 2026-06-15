@@ -1,8 +1,9 @@
 import streamlit as st
 from datetime import datetime
 from sqlalchemy.orm import Session
+from dnsight.calculators.benefit import update_benefit_for_product
 from dnsight.core.models import ProductType, Product, Attribute, AttributeValue, PriceHistory
-from dashboard.utils import get_last_price
+from dashboard.utils import get_last_price, get_last_score
 
 
 def edit_attributes(db: Session, component_type: str):
@@ -37,6 +38,32 @@ def edit_attributes(db: Session, component_type: str):
                 st.rerun()
         elif new_price == current_price and current_price is not None:
             st.info("Новая цена совпадает с текущей, изменений не требуется.")
+
+    # ----- Управление скором (для CPU, GPU, MB) -----
+    if component_type in ("CPU", "GPU", "Motherboard") and product.model_id:
+        st.subheader("🎯 Ручное изменение скора")
+        col_score1, col_score2 = st.columns(2)
+        with col_score1:
+            current_score = get_last_score(db, product.model_id)
+            st.metric("Текущий скор", f"{current_score:.0f}" if current_score else "Нет данных")
+        with col_score2:
+            new_score = st.number_input("Новый скор", min_value=0.0, step=10.0, value=0.0, key=f"score_{component_type}_{product.id}")
+            if new_score > 0 and (current_score is None or new_score != current_score):
+                if st.checkbox("Установить новый скор (добавит запись в историю)", key=f"set_score_{component_type}_{product.id}"):
+                    from dnsight.core.models import ModelScore
+                    new_score_record = ModelScore(
+                        model_id=product.model_id,
+                        score=new_score,
+                        source="manual",
+                        updated_at=datetime.utcnow()
+                    )
+                    db.add(new_score_record)
+                    # Пересчитываем Benefit для всех продуктов этой модели
+                    for prod in db.query(Product).filter_by(model_id=product.model_id).all():
+                        update_benefit_for_product(prod, db)
+                    db.commit()
+                    st.success(f"Скор {new_score:.0f} установлен!")
+                    st.rerun()
 
     # ----- Редактирование характеристик -----
     attrs = db.query(AttributeValue).filter_by(product_id=selected_id).all()

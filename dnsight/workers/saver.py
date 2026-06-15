@@ -101,7 +101,7 @@ def calculate_motherboard_score(specs: Dict[str, str]) -> Optional[float]:
     pcie = extract_number(specs.get(pcie_key)) if pcie_key else 1.0
     phases = sum_phases(specs.get(phases_key)) if phases_key else 1
 
-    score = channels * max_ram * freq * pcie * phases
+    score = (channels * max_ram * freq * pcie * phases) ** (1 / 2)
     logger.info(f"Вычислен скор для MB: {score} (каналы={channels}, max_ram={max_ram}, частота={freq}, PCIe={pcie}, фазы={phases})")
     return score
 

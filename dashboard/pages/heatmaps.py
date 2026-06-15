@@ -14,26 +14,25 @@ from dnsight.services.heatmap_service import HeatmapService
 from dnsight.config.settings import GPU_TARGET_MULTIPLIER, CACHE_TTL, TDP_PHASE_RATIO
 
 
-# --- Кэшированные функции получения компонентов ---
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_cpu_components_cached(db: Session):
+# --- Функции получения компонентов (без кэширования) ---
+def get_cpu_components(db: Session):
     service = ComponentService(db)
     return service.get_cpu_components()
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_gpu_components_cached(db: Session):
+def get_gpu_components(db: Session):
     service = ComponentService(db)
     return service.get_gpu_components()
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_mb_components_cached(db: Session):
+def get_mb_components(db: Session):
     service = ComponentService(db)
     return service.get_mb_components()
 
-# --- Вспомогательные функции для CPU/MB (сокеты, TDP, фазы) ---
+
+# --- Кэшируемые функции для CPU/MB (сериализуемые данные) ---
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def get_cpu_socket_pcie(db: Session):
     """Возвращает список процессоров с сокетом, версией PCIe и TDP (используется в MB‑вкладках)"""
-    cpus = get_cpu_components_cached(db)
+    cpus = get_cpu_components(db)
     result = []
     for cpu in cpus:
         socket = cpu.get_socket()
@@ -47,7 +46,6 @@ def get_cpu_socket_pcie(db: Session):
             "pcie": cpu.get_pcie_version(),
             "tdp": cpu.get_tdp() if hasattr(cpu, "get_tdp") else 0,
         })
-    # Сортировка: по сокету, внутри по score (убывание)
     socket_max_score = {}
     for c in result:
         s = c["socket"]
@@ -58,9 +56,11 @@ def get_cpu_socket_pcie(db: Session):
     result.sort(key=lambda x: (socket_order[x["socket"]], -x["score"]))
     return result
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def get_mb_socket_pcie(db: Session):
     """Возвращает список материнских плат с сокетом, версией PCIe и количеством фаз"""
-    mbs = get_mb_components_cached(db)
+    mbs = get_mb_components(db)
     result = []
     for mb in mbs:
         socket = mb.get_socket()
@@ -74,25 +74,27 @@ def get_mb_socket_pcie(db: Session):
             "pcie": mb.get_pcie_version(),
             "phase": mb.get_phase() if hasattr(mb, "get_phase") else 0,
         })
-    # Сортировка по порядку сокетов, заданному процессорами
     cpu_sorted = get_cpu_socket_pcie(db)
     socket_order = {s: i for i, s in enumerate([c["socket"] for c in cpu_sorted])}
     result.sort(key=lambda x: (socket_order.get(x["socket"], len(socket_order)), -x["score"]))
     return result
 
 
-# --- Матричные вычисления (с использованием HeatmapService) ---
+# --- Кэшируемые матричные вычисления ---
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_benefit(db: Session):
-    cpus = get_cpu_components_cached(db)
-    gpus = get_gpu_components_cached(db)
+    cpus = get_cpu_components(db)
+    gpus = get_gpu_components(db)
     if not cpus or not gpus:
         return None, None, None
     cpu_names, gpu_names, matrix = HeatmapService.build_matrix(cpus, gpus, lambda cpu, gpu: cpu.get_benefit() * gpu.get_benefit())
     return cpu_names, gpu_names, matrix
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_optimal(db: Session):
-    cpus = get_cpu_components_cached(db)
-    gpus = get_gpu_components_cached(db)
+    cpus = get_cpu_components(db)
+    gpus = get_gpu_components(db)
     if not cpus or not gpus:
         return None, None, None
     def optimal_func(cpu, gpu):
@@ -108,6 +110,8 @@ def compute_heatmap_optimal(db: Session):
     cpu_names, gpu_names, matrix = HeatmapService.build_matrix(cpus, gpus, optimal_func)
     return cpu_names, gpu_names, matrix
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_combined(db: Session):
     res_benefit = compute_heatmap_benefit(db)
     res_optimal = compute_heatmap_optimal(db)
@@ -120,6 +124,8 @@ def compute_heatmap_combined(db: Session):
     combined = [[(benefit_mat[i][j] * optimal_mat[i][j]) ** 0.5 for j in range(len(gpu_names))] for i in range(len(cpu_names))]
     return cpu_names, gpu_names, combined
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_cpu_mb_benefit(db: Session):
     cpus = get_cpu_socket_pcie(db)
     mbs = get_mb_socket_pcie(db)
@@ -138,6 +144,8 @@ def compute_heatmap_cpu_mb_benefit(db: Session):
         matrix.append(row)
     return cpu_names, mb_names, matrix
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_power(db: Session):
     cpus = get_cpu_socket_pcie(db)
     mbs = get_mb_socket_pcie(db)
@@ -170,6 +178,8 @@ def compute_heatmap_power(db: Session):
         matrix.append(row)
     return cpu_names, mb_names, matrix
 
+
+@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
 def compute_heatmap_combined_cpu_mb(db: Session):
     res_benefit = compute_heatmap_cpu_mb_benefit(db)
     res_power = compute_heatmap_power(db)
