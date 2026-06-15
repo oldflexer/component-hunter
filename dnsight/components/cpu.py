@@ -3,9 +3,10 @@ import re
 from typing import Optional
 from sqlalchemy.orm import Session
 from .base import BaseComponent
-from dnsight.core.models import Product, ModelScore, AttributeValue
+from dnsight.core.models import Product, AttributeValue
 from dashboard.utils import get_last_score, get_last_benefit
 from dnsight.config.attributes import ATTR_SOCKET, ATTR_CPU_PCIE, ATTR_CPU_TDP
+
 
 class CPUComponent(BaseComponent):
     def __init__(self, db: Session, model_id: int, name: str):
@@ -21,7 +22,8 @@ class CPUComponent(BaseComponent):
         return get_last_score(self.db, self.model_id)
 
     def get_benefit(self) -> float:
-        return get_last_benefit(self.db, self._product.id) if self._product else 0.0
+        benefit = get_last_benefit(self.db, self._product.id) if self._product else None
+        return benefit if benefit is not None else 0.0
 
     def get_socket(self) -> str:
         return self._attrs.get(ATTR_SOCKET, "").strip()

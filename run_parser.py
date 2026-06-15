@@ -4,7 +4,7 @@ import asyncio
 from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_product_and_attributes
-from dnsight.core.config import DNS_CATEGORIES
+from dnsight.config.settings import DNS_CATEGORIES
 import os
 from dnsight.core.logging import setup_logging
 

@@ -1,18 +1,20 @@
 # component_service.py
-from typing import List, Union
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from dnsight.core.models import ProductType, Model, Product, Attribute, AttributeValue
 from dnsight.components.cpu import CPUComponent
 from dnsight.components.gpu import GPUComponent
 from dnsight.components.motherboard import MotherboardComponent
 from dnsight.config.settings import ComponentType
-from dnsight.config.attributes import ATTR_GPU_CHIP
+from dnsight.config.attributes import ATTR_MODEL
+from dashboard.utils import get_last_score, get_last_benefit, get_delta_ratio
+
 
 class ComponentService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_type_id(self, type_name: ComponentType) -> int:
+    def get_type_id(self, type_name: ComponentType) -> Optional[int]:
         pt = self.db.query(ProductType).filter_by(name=type_name).first()
         return pt.id if pt else None
 
@@ -50,7 +52,6 @@ class ComponentService:
         products = self.get_products_by_type(ComponentType.MOTHERBOARD)
         components = []
         for prod in products:
-            # Определяем отображаемое имя
             attrs = {av.attribute.name: av.raw_value for av in self.db.query(AttributeValue).filter_by(product_id=prod.id).all()}
             name = None
             if prod.model_id:
@@ -61,6 +62,3 @@ class ComponentService:
                 name = attrs.get(ATTR_MODEL, prod.name)
             components.append(MotherboardComponent(self.db, prod.id, name, prod.model_id))
         return components
-
-# Вспомогательная функция (нужна для импорта)
-from dashboard.utils import get_last_score, get_last_benefit, get_delta_ratio

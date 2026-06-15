@@ -7,9 +7,9 @@ from dnsight.core.models import Product, AttributeValue
 from dashboard.utils import get_last_score, get_last_benefit
 from dnsight.config.attributes import ATTR_SOCKET, ATTR_MB_PCIE, ATTR_MB_PHASES
 
+
 class MotherboardComponent(BaseComponent):
     def __init__(self, db: Session, product_id: int, name: str, model_id: Optional[int] = None):
-        # Для MB компонент создаётся не по модели, а по продукту (так как модель может отсутствовать)
         super().__init__(db, model_id, name)
         self.product_id = product_id
         self._product = db.query(Product).filter_by(id=product_id).first()
@@ -25,7 +25,8 @@ class MotherboardComponent(BaseComponent):
         return 0.0
 
     def get_benefit(self) -> float:
-        return get_last_benefit(self.db, self.product_id) or 0.0
+        benefit = get_last_benefit(self.db, self.product_id)
+        return benefit if benefit is not None else 0.0
 
     def get_socket(self) -> str:
         return self._attrs.get(ATTR_SOCKET, "").strip()

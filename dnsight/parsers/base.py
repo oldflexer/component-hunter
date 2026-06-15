@@ -4,7 +4,7 @@ import time
 import logging
 from abc import ABC
 from bs4 import BeautifulSoup
-from ..core.config import REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY, USER_AGENTS
+from ..config.settings import REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY, USER_AGENTS
 
 logger = logging.getLogger(__name__)
 

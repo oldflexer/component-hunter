@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 
-from ..core.config import DNS_CATEGORIES, REQUEST_TIMEOUT
+from ..config.settings import DNS_CATEGORIES, REQUEST_TIMEOUT
 from ..core.logging import get_logger
 
 

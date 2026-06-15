@@ -2,11 +2,13 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
 from dnsight.services.component_service import ComponentService
-from config.settings import GPU_TARGET_MULTIPLIER, TDP_PHASE_RATIO, INF_REPLACEMENT
+from dnsight.config.settings import GPU_TARGET_MULTIPLIER, TDP_PHASE_RATIO, INF_REPLACEMENT
 from dashboard.utils import get_last_price
 
 
 def calculate_combined_gpu(cpu_benefit, gpu_benefit, cpu_delta, gpu_delta, cpu_score, gpu_score):
+    if cpu_score is None or gpu_score is None:
+        return 0.0
     target = cpu_score * GPU_TARGET_MULTIPLIER
     diff = abs(target - gpu_score)
     optimal = 1.0 / diff if diff != 0 else float('inf')
@@ -42,20 +44,27 @@ def render_cpu_gpu_tab(db: Session):
     all_pairs = []
     for cpu in cpus:
         cpu_price = get_last_price(db, cpu._product.id) if cpu._product else 0
-        if cpu_price == 0:
+        if cpu_price is None or cpu_price == 0:
             continue
+        cpu_score = cpu.get_score()
+        if cpu_score is None:
+            continue
+        cpu_benefit = cpu.get_benefit()
         for gpu in gpus:
             gpu_price = get_last_price(db, gpu._product.id) if gpu._product else 0
             if gpu_price == 0:
                 continue
-            total_score = cpu.get_score() + gpu.get_score()
+            gpu_score = gpu.get_score()
+            if gpu_score is None:
+                continue
+            total_score = cpu_score + gpu_score
             total_price = cpu_price + gpu_price
             if total_score < min_score or total_price > max_price:
                 continue
             combined = calculate_combined_gpu(
-                cpu.get_benefit(), gpu.get_benefit(),
-                1.0, 1.0,  # delta пока не используется, можно добавить позже
-                cpu.get_score(), gpu.get_score()
+                cpu_benefit, gpu.get_benefit(),
+                1.0, 1.0,
+                cpu_score, gpu_score
             )
             all_pairs.append({
                 "CPU": cpu.name,
@@ -69,7 +78,6 @@ def render_cpu_gpu_tab(db: Session):
         st.warning("Нет пар, удовлетворяющих условиям.")
         return
 
-    # Группировка по CPU, топ-3 по Combined
     cpu_groups = {}
     for pair in all_pairs:
         cpu_name = pair["CPU"]
@@ -94,7 +102,6 @@ def render_cpu_mb_tab(db: Session):
         st.warning("Нет данных о CPU или MB")
         return
 
-    # Группировка MB по сокету
     mb_by_socket = {}
     for mb in mbs:
         socket = mb.get_socket()

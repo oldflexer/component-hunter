@@ -10,9 +10,9 @@ from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_product_and_attributes
 from dnsight.workers.update_passmark import update_passmark_scores
-from dnsight.core.config import DNS_CATEGORIES
+from dnsight.config.settings import DNS_CATEGORIES
 from dashboard.pages import summary, tables, diagnostics, forms, graphs, analytics, queries, selection, heatmaps, builds
-from dashboard.config import CATEGORY_TO_TYPE
+from dnsight.config.settings import CATEGORY_MAPPING as CATEGORY_TO_TYPE
 
 st.set_page_config(page_title="DNSight Dashboard", layout="wide")
 st.title("📊 DNSight")

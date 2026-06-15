@@ -16,7 +16,7 @@ from ..core.models import ProductType, Model, ModelScore, Product, Attribute, At
 from ..core.logging import get_logger
 from ..parsers.passmark import PassMarkParser
 from ..calculators.benefit import update_benefit_for_product
-from config.attributes import ATTR_GPU_CHIP
+from ..config.attributes import ATTR_GPU_CHIP
 
 logger = get_logger("passmark_updater", "logs/passmark_updater.log", mode='w')
 

@@ -9,7 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
-from ..core.config import REQUEST_TIMEOUT
+from ..config.settings import REQUEST_TIMEOUT
 from ..core.logging import get_logger
 
 logger = get_logger("passmark", "logs/passmark.log", mode='w')

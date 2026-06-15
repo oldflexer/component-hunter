@@ -109,9 +109,13 @@ def compute_heatmap_optimal(db: Session):
     return cpu_names, gpu_names, matrix
 
 def compute_heatmap_combined(db: Session):
-    cpu_names, gpu_names, benefit_mat = compute_heatmap_benefit(db)
-    _, _, optimal_mat = compute_heatmap_optimal(db)
-    if cpu_names is None or gpu_names is None:
+    res_benefit = compute_heatmap_benefit(db)
+    res_optimal = compute_heatmap_optimal(db)
+    if res_benefit[0] is None or res_optimal[0] is None:
+        return None, None, None
+    cpu_names, gpu_names, benefit_mat = res_benefit
+    _, _, optimal_mat = res_optimal
+    if benefit_mat is None or optimal_mat is None:
         return None, None, None
     combined = [[(benefit_mat[i][j] * optimal_mat[i][j]) ** 0.5 for j in range(len(gpu_names))] for i in range(len(cpu_names))]
     return cpu_names, gpu_names, combined
@@ -167,12 +171,14 @@ def compute_heatmap_power(db: Session):
     return cpu_names, mb_names, matrix
 
 def compute_heatmap_combined_cpu_mb(db: Session):
-    result_benefit = compute_heatmap_cpu_mb_benefit(db)
-    result_power = compute_heatmap_power(db)
-    if result_benefit[0] is None or result_power[0] is None:
+    res_benefit = compute_heatmap_cpu_mb_benefit(db)
+    res_power = compute_heatmap_power(db)
+    if res_benefit[0] is None or res_power[0] is None:
         return None, None, None
-    cpu_names, mb_names, benefit_mat = result_benefit
-    _, _, power_mat = result_power
+    cpu_names, mb_names, benefit_mat = res_benefit
+    _, _, power_mat = res_power
+    if benefit_mat is None or power_mat is None:
+        return None, None, None
     combined = []
     for i in range(len(cpu_names)):
         row = []
@@ -187,7 +193,7 @@ def compute_heatmap_combined_cpu_mb(db: Session):
     return cpu_names, mb_names, combined
 
 
-# --- Рендеринг (без изменений, только вызовы функций) ---
+# --- Рендеринг ---
 def render(db: Session):
     tabs = st.tabs([
         "📊 Benefit CPU × GPU",
