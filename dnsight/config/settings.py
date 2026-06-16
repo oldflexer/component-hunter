@@ -1,34 +1,44 @@
 # settings.py
-from enum import Enum
 import os
+from enum import Enum
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # загружаем .env
 
+# --- Переменные из .env с дефолтами ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///dnsight.db")
 
-# Категории для парсинга
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "60"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
+RETRY_DELAY = int(os.getenv("RETRY_DELAY", "5"))
+
+CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
+
+GPU_TARGET_MULTIPLIER = float(os.getenv("GPU_TARGET_MULTIPLIER", "1.25"))
+TDP_PHASE_RATIO = float(os.getenv("TDP_PHASE_RATIO", "10.58"))
+INF_REPLACEMENT = float(os.getenv("INF_REPLACEMENT", "0.0"))
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_FILE = os.getenv("LOG_FILE", "logs/app.log")
+
+# --- DNS категории (можно переопределить через .env) ---
 DNS_CATEGORIES = {
-    # "cpu": "https://www.dns-shop.ru/catalog/17a899cd16404e77/processory/",
-    # "motherboard": "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/",
-    # "gpu": "https://www.dns-shop.ru/catalog/17a89aab16404e77/videokarty/",
-    "ram_dimm": "https://www.dns-shop.ru/catalog/17a89a3916404e77/operativnaa-pamat-dimm/",
-    "ram_sodimm": "https://www.dns-shop.ru/catalog/17a9b91b16404e77/operativnaa-pamat-so-dimm/",
-    # "psu": "https://www.dns-shop.ru/catalog/17a89c2216404e77/bloki-pitania/",
-    # "case": "https://www.dns-shop.ru/catalog/17a89c5616404e77/korpusa/",
-    # "cooler": "https://www.dns-shop.ru/catalog/17a9cc2d16404e77/kulery-dla-processorov/",
-    # "lcs": "https://www.dns-shop.ru/catalog/17a9cc9816404e77/sistemy-zidkostnogo-ohlazdenia/",
-    # "ssd": "https://www.dns-shop.ru/catalog/8a9ddfba20724e77/ssd-nakopiteli/",
-    # "ssdm2": "https://www.dns-shop.ru/catalog/dd58148920724e77/ssd-m2-nakopiteli/",
-    # "hdd35": "https://www.dns-shop.ru/catalog/17a8914916404e77/zestkie-diski-35/",
-    # "hdd25": "https://www.dns-shop.ru/catalog/f09d15560cdd4e77/zestkie-diski-25/",
+    "cpu": os.getenv("DNS_CPU_URL", "https://www.dns-shop.ru/catalog/17a899cd16404e77/processory/"),
+    "gpu": os.getenv("DNS_GPU_URL", "https://www.dns-shop.ru/catalog/17a89aab16404e77/videokarty/"),
+    "motherboard": os.getenv("DNS_MOTHERBOARD_URL", "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/"),
+    "ram_dimm": os.getenv("DNS_RAM_DIMM_URL", "https://www.dns-shop.ru/catalog/17a89a3916404e77/operativnaa-pamat-dimm/"),
+    "ram_sodimm": os.getenv("DNS_RAM_SODIMM_URL", "https://www.dns-shop.ru/catalog/17a9b91b16404e77/operativnaa-pamat-so-dimm/"),
+    "psu": os.getenv("DNS_PSU_URL", "https://www.dns-shop.ru/catalog/17a89c2216404e77/bloki-pitania/"),
+    # "case": os.getenv("DNS_CASE_URL", "https://www.dns-shop.ru/catalog/17a89c5616404e77/korpusa/"),
+    # "cooler": os.getenv("DNS_COOLER_URL", "https://www.dns-shop.ru/catalog/17a9cc2d16404e77/kulery-dla-processorov/"),
+    # "lcs": os.getenv("DNS_LCS_URL", "https://www.dns-shop.ru/catalog/17a9cc9816404e77/sistemy-zidkostnogo-ohlazdenia/"),
+    # "ssd": os.getenv("DNS_SSD_URL", "https://www.dns-shop.ru/catalog/8a9ddfba20724e77/ssd-nakopiteli/"),
+    # "ssdm2": os.getenv("DNS_SSDM2_URL", "https://www.dns-shop.ru/catalog/dd58148920724e77/ssd-m2-nakopiteli/"),
+    # "hdd35": os.getenv("DNS_HDD35_URL", "https://www.dns-shop.ru/catalog/17a8914916404e77/zestkie-diski-35/"),
+    # "hdd25": os.getenv("DNS_HDD25_URL", "https://www.dns-shop.ru/catalog/f09d15560cdd4e77/zestkie-diski-25/"),
 }
 
-REQUEST_TIMEOUT = 60
-MAX_RETRIES = 5
-RETRY_DELAY = 5
-
-
+# --- Константы (не зависят от окружения) ---
 class ComponentType(str, Enum):
     CPU = "CPU"
     GPU = "GPU"
@@ -38,15 +48,6 @@ class ComponentType(str, Enum):
     CASE = "Case"
     COOLER = "Cooler"
     STORAGE = "Storage"
-
-# Коэффициенты подбора
-GPU_TARGET_MULTIPLIER = 1.25   # Score_CPU * 1.25 = целевой Score_GPU
-
-# Кэширование
-CACHE_TTL = 3600  # 1 час
-
-# Динамика
-DEFAULT_DAYS_BACK = 7
 
 # Формулы расчёта скора материнской платы (весовые коэффициенты)
 MB_SCORE_WEIGHTS = {
@@ -58,10 +59,7 @@ MB_SCORE_WEIGHTS = {
     "phases": 1.0
 }
 
-# Оптимальное соотношение TDP / Phase (используется в тепловой карте Power)
-TDP_PHASE_RATIO = 10.58
-
-# Конфигурация для дашборда
+# Конфигурация для дашборда (маппинг ключей категорий на типы)
 CATEGORY_MAPPING = {
     "cpu": "CPU",
     "gpu": "GPU",
@@ -78,4 +76,5 @@ CATEGORY_MAPPING = {
     "hdd25": "Storage",
 }
 
-INF_REPLACEMENT = 0.0
+# Коэффициент для расчета динамики (по умолчанию)
+DEFAULT_DAYS_BACK = 7

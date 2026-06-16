@@ -17,11 +17,15 @@ from dnsight.config.settings import GPU_TARGET_MULTIPLIER, CACHE_TTL, TDP_PHASE_
 # --- Функции получения компонентов (без кэширования) ---
 def get_cpu_components(db: Session):
     service = ComponentService(db)
-    return service.get_cpu_components()
+    cpus = service.get_cpu_components()
+    cpus.sort(key=lambda cpu: cpu.get_score() if cpu.get_score() is not None else 0, reverse=True)
+    return cpus
 
 def get_gpu_components(db: Session):
     service = ComponentService(db)
-    return service.get_gpu_components()
+    gpus = service.get_gpu_components()
+    gpus.sort(key=lambda gpu: gpu.get_score() if gpu.get_score() is not None else 0, reverse=True)
+    return gpus
 
 def get_mb_components(db: Session):
     service = ComponentService(db)

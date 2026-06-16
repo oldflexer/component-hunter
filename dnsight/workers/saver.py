@@ -128,7 +128,7 @@ def save_product_and_attributes(
         model_name = specs.get(ATTR_MODEL)
 
     model = None
-    if model_name and type_name in ("CPU", "GPU", "Motherboard"):
+    if model_name and type_name in ("CPU", "GPU", "Motherboard", "RAM", "PSU", "Storage", "Case", "Cooler"):
         model = get_or_create_model(db, model_name, type_id_value)
 
     # Сохранение продукта

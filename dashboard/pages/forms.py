@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime
 from sqlalchemy.orm import Session
 from dnsight.calculators.benefit import update_benefit_for_product
-from dnsight.core.models import ProductType, Product, Attribute, AttributeValue, PriceHistory
+from dnsight.core.models import ProductType, Product, Attribute, AttributeValue, PriceHistory, ModelScore
 from dashboard.utils import get_last_price, get_last_score
 
 
@@ -39,8 +39,8 @@ def edit_attributes(db: Session, component_type: str):
         elif new_price == current_price and current_price is not None:
             st.info("Новая цена совпадает с текущей, изменений не требуется.")
 
-    # ----- Управление скором (для CPU, GPU, MB) -----
-    if component_type in ("CPU", "GPU", "Motherboard") and product.model_id:
+    # ----- Управление скором (для типов, у которых есть модели) -----
+    if product.model_id:
         st.subheader("🎯 Ручное изменение скора")
         col_score1, col_score2 = st.columns(2)
         with col_score1:
@@ -50,7 +50,6 @@ def edit_attributes(db: Session, component_type: str):
             new_score = st.number_input("Новый скор", min_value=0.0, step=10.0, value=0.0, key=f"score_{component_type}_{product.id}")
             if new_score > 0 and (current_score is None or new_score != current_score):
                 if st.checkbox("Установить новый скор (добавит запись в историю)", key=f"set_score_{component_type}_{product.id}"):
-                    from dnsight.core.models import ModelScore
                     new_score_record = ModelScore(
                         model_id=product.model_id,
                         score=new_score,
@@ -58,7 +57,6 @@ def edit_attributes(db: Session, component_type: str):
                         updated_at=datetime.utcnow()
                     )
                     db.add(new_score_record)
-                    # Пересчитываем Benefit для всех продуктов этой модели
                     for prod in db.query(Product).filter_by(model_id=product.model_id).all():
                         update_benefit_for_product(prod, db)
                     db.commit()
@@ -119,10 +117,18 @@ def edit_attributes(db: Session, component_type: str):
 
 
 def render(db: Session):
-    form_tab1, form_tab2, form_tab3 = st.tabs(["CPU", "GPU", "Motherboard"])
-    with form_tab1:
-        edit_attributes(db, "CPU")
-    with form_tab2:
-        edit_attributes(db, "GPU")
-    with form_tab3:
-        edit_attributes(db, "Motherboard")
+    # Получаем все типы продуктов, для которых есть хотя бы один продукт
+    product_types = db.query(ProductType).order_by(ProductType.name).all()
+    types_with_products = [
+        pt for pt in product_types
+        if db.query(Product).filter_by(type_id=pt.id).first() is not None
+    ]
+
+    if not types_with_products:
+        st.info("Нет данных о типах продуктов в БД.")
+        return
+
+    tabs = st.tabs([pt.name for pt in types_with_products])
+    for tab, pt in zip(tabs, types_with_products):
+        with tab:
+            edit_attributes(db, pt.name)

@@ -58,6 +58,10 @@ def plot_trends(db: Session, component_type: str):
         st.info(f"Нет данных для {component_type}")
         return
 
+    score_title = f"Средний балл {component_type}"
+    if component_type == "Motherboard":
+        score_title += " (расчётный)"
+
     col1, col2, col3 = st.columns(3)
     with col1:
         if not avg_price.empty:
@@ -69,11 +73,8 @@ def plot_trends(db: Session, component_type: str):
             st.info("Нет данных о ценах")
     with col2:
         if not avg_score.empty:
-            title = f"Средний балл {component_type}"
-            if component_type == "Motherboard":
-                title += " (расчётный)"
             fig = px.line(avg_score, x="date", y="avg_score",
-                          title=title,
+                          title=score_title,
                           labels={"avg_score": "баллы", "date": "Дата"})
             st.plotly_chart(fig, width='stretch', height=600)
         else:
@@ -89,10 +90,17 @@ def plot_trends(db: Session, component_type: str):
 
 
 def render(db: Session):
-    cpu_tab, gpu_tab, mb_tab = st.tabs(["CPU", "GPU", "Motherboard"])
-    with cpu_tab:
-        plot_trends(db, "CPU")
-    with gpu_tab:
-        plot_trends(db, "GPU")
-    with mb_tab:
-        plot_trends(db, "Motherboard")
+    product_types = db.query(ProductType).order_by(ProductType.name).all()
+    types_with_products = [
+        pt for pt in product_types
+        if db.query(Product).filter_by(type_id=pt.id).first() is not None
+    ]
+
+    if not types_with_products:
+        st.info("Нет данных о типах продуктов в БД.")
+        return
+
+    tabs = st.tabs([pt.name for pt in types_with_products])
+    for tab, pt in zip(tabs, types_with_products):
+        with tab:
+            plot_trends(db, pt.name)

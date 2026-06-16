@@ -1,5 +1,4 @@
 # attributes.py
-# Имена атрибутов (ключи в словаре specs и в БД)
 ATTR_SOCKET = "Сокет"
 ATTR_CPU_PCIE = "Встроенный контроллер PCI Express"
 ATTR_MB_PCIE = "Версия PCI Express"

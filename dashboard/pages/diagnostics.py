@@ -56,127 +56,64 @@ def render_problem_table(db: Session, title: str, df: pd.DataFrame, product_ids:
                     st.rerun()
 
 
-def render(db: Session):
-    cpu_tab, gpu_tab, mb_tab = st.tabs(["CPU", "GPU", "Motherboard"])
+def render_diagnostic_tab(db: Session, type_name: str, type_id: int):
+    """Отрисовывает вкладку для конкретного типа продукта."""
+    # Проверяем, есть ли модели для этого типа (если тип поддерживает модели)
+    has_models = db.query(Model).filter_by(type_id=type_id).first() is not None
 
-    # ---- CPU ----
-    with cpu_tab:
-        type_cpu = db.query(ProductType).filter_by(name="CPU").first()
-        if type_cpu:
-            # Без характеристик
-            products_no_attrs = db.query(Product).filter(
-                Product.type_id == type_cpu.id, ~Product.attribute_values.any()
-            ).all()
-            if products_no_attrs:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "CPU – без характеристик", df, [p.id for p in products_no_attrs], "cpu_no_attrs")
-            else:
-                st.success("✅ CPU – без характеристик: проблем нет!")
+    # Без характеристик
+    products_no_attrs = db.query(Product).filter(
+        Product.type_id == type_id,
+        ~Product.attribute_values.any()
+    ).all()
+    if products_no_attrs:
+        df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs], columns=["ID", "Name", "URL"])
+        render_problem_table(db, f"{type_name} – без характеристик", df, [p.id for p in products_no_attrs], f"{type_name.lower()}_no_attrs")
+    else:
+        st.success(f"✅ {type_name} – без характеристик: проблем нет!")
 
-            # Без баллов PassMark
-            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
-            products_no_scores = db.query(Product).filter(
-                Product.type_id == type_cpu.id,
-                Product.model_id.isnot(None),
-                Product.model_id.notin_(model_ids_with_scores)
-            ).all()
-            if products_no_scores:
-                df = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url)
-                                   for p in products_no_scores], columns=["ID", "Name", "Model Name", "URL"])
-                render_problem_table(db, "CPU – без баллов PassMark", df, [p.id for p in products_no_scores], "cpu_no_scores")
-            else:
-                st.success("✅ CPU – без баллов PassMark: проблем нет!")
-
-            # Без цены
-            product_ids_with_price = [row[0] for row in db.query(PriceHistory.product_id).distinct().all()]
-            products_no_price = db.query(Product).filter(
-                Product.type_id == type_cpu.id,
-                Product.id.notin_(product_ids_with_price)
-            ).all()
-            if products_no_price:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_price], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "CPU – без цены", df, [p.id for p in products_no_price], "cpu_no_price")
-            else:
-                st.success("✅ CPU – без цены: проблем нет!")
-
-    # ---- GPU ----
-    with gpu_tab:
-        type_gpu = db.query(ProductType).filter_by(name="GPU").first()
-        if type_gpu:
-            # Без характеристик
-            products_no_attrs = db.query(Product).filter(
-                Product.type_id == type_gpu.id, ~Product.attribute_values.any()
-            ).all()
-            if products_no_attrs:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "GPU – без характеристик", df, [p.id for p in products_no_attrs], "gpu_no_attrs")
-            else:
-                st.success("✅ GPU – без характеристик: проблем нет!")
-
-            # Без баллов PassMark
-            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
-            products_no_scores = db.query(Product).filter(
-                Product.type_id == type_gpu.id,
-                Product.model_id.isnot(None),
-                Product.model_id.notin_(model_ids_with_scores)
-            ).all()
-            if products_no_scores:
-                df = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url)
-                                   for p in products_no_scores], columns=["ID", "Name", "Model Name", "URL"])
-                render_problem_table(db, "GPU – без баллов PassMark", df, [p.id for p in products_no_scores], "gpu_no_scores")
-            else:
-                st.success("✅ GPU – без баллов PassMark: проблем нет!")
-
-            # Без цены
-            product_ids_with_price = [row[0] for row in db.query(PriceHistory.product_id).distinct().all()]
-            products_no_price = db.query(Product).filter(
-                Product.type_id == type_gpu.id,
-                Product.id.notin_(product_ids_with_price)
-            ).all()
-            if products_no_price:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_price], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "GPU – без цены", df, [p.id for p in products_no_price], "gpu_no_price")
-            else:
-                st.success("✅ GPU – без цены: проблем нет!")
-
-    # ---- Motherboard ----
-    with mb_tab:
-        type_mb = db.query(ProductType).filter_by(name="Motherboard").first()
-        if type_mb:
-            # Без характеристик
-            products_no_attrs = db.query(Product).filter(
-                Product.type_id == type_mb.id, ~Product.attribute_values.any()
-            ).all()
-            if products_no_attrs:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_attrs], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "Motherboard – без характеристик", df, [p.id for p in products_no_attrs], "mb_no_attrs")
-            else:
-                st.success("✅ Motherboard – без характеристик: проблем нет!")
-
-            # Без баллов (для MB)
-            model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
-            products_no_scores = db.query(Product).filter(
-                Product.type_id == type_mb.id,
-                Product.model_id.isnot(None),
-                Product.model_id.notin_(model_ids_with_scores)
-            ).all()
-            if products_no_scores:
-                df = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url)
-                                   for p in products_no_scores], columns=["ID", "Name", "Model Name", "URL"])
-                render_problem_table(db, "Motherboard – без баллов", df, [p.id for p in products_no_scores], "mb_no_scores")
-            else:
-                st.success("✅ Motherboard – без баллов: проблем нет!")
-
-            # Без цены
-            product_ids_with_price = [row[0] for row in db.query(PriceHistory.product_id).distinct().all()]
-            products_no_price = db.query(Product).filter(
-                Product.type_id == type_mb.id,
-                Product.id.notin_(product_ids_with_price)
-            ).all()
-            if products_no_price:
-                df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_price], columns=["ID", "Name", "URL"])
-                render_problem_table(db, "Motherboard – без цены", df, [p.id for p in products_no_price], "mb_no_price")
-            else:
-                st.success("✅ Motherboard – без цены: проблем нет!")
+    # Без баллов (только если есть модели)
+    if has_models:
+        model_ids_with_scores = [row[0] for row in db.query(ModelScore.model_id).distinct().all()]
+        products_no_scores = db.query(Product).filter(
+            Product.type_id == type_id,
+            Product.model_id.isnot(None),
+            Product.model_id.notin_(model_ids_with_scores)
+        ).all()
+        if products_no_scores:
+            df = pd.DataFrame([(p.id, p.name, p.model.name if p.model else "Нет модели", p.url)
+                               for p in products_no_scores], columns=["ID", "Name", "Model Name", "URL"])
+            render_problem_table(db, f"{type_name} – без баллов", df, [p.id for p in products_no_scores], f"{type_name.lower()}_no_scores")
         else:
-            st.info("Тип Motherboard не найден в БД.")
+            st.success(f"✅ {type_name} – без баллов: проблем нет!")
+
+    # Без цены
+    product_ids_with_price = [row[0] for row in db.query(PriceHistory.product_id).distinct().all()]
+    products_no_price = db.query(Product).filter(
+        Product.type_id == type_id,
+        Product.id.notin_(product_ids_with_price)
+    ).all()
+    if products_no_price:
+        df = pd.DataFrame([(p.id, p.name, p.url) for p in products_no_price], columns=["ID", "Name", "URL"])
+        render_problem_table(db, f"{type_name} – без цены", df, [p.id for p in products_no_price], f"{type_name.lower()}_no_price")
+    else:
+        st.success(f"✅ {type_name} – без цены: проблем нет!")
+
+
+def render(db: Session):
+    # Получаем все типы продуктов, для которых есть хотя бы один продукт
+    product_types = db.query(ProductType).order_by(ProductType.name).all()
+    types_with_products = [
+        pt for pt in product_types
+        if db.query(Product).filter_by(type_id=pt.id).first() is not None
+    ]
+
+    if not types_with_products:
+        st.info("Нет данных о типах продуктов в БД.")
+        return
+
+    # Создаём вкладки динамически
+    tabs = st.tabs([pt.name for pt in types_with_products])
+    for tab, pt in zip(tabs, types_with_products):
+        with tab:
+            render_diagnostic_tab(db, pt.name, pt.id)
