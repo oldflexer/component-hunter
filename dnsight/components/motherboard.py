@@ -17,7 +17,11 @@ class MotherboardComponent(BaseComponent):
 
     def _load_attrs(self) -> dict:
         attrs = self.db.query(AttributeValue).filter_by(product_id=self.product_id).all()
-        return {av.attribute.name: av.raw_value for av in attrs}
+        result = {}
+        for av in attrs:
+            if av.attribute is not None:
+                result[av.attribute.name] = av.raw_value
+        return result
 
     def get_score(self) -> Optional[float]:
         if self.model_id:

@@ -16,7 +16,11 @@ class CPUComponent(BaseComponent):
 
     def _load_attrs(self) -> dict:
         attrs = self.db.query(AttributeValue).filter_by(product_id=self._product.id).all()
-        return {av.attribute.name: av.raw_value for av in attrs}
+        result = {}
+        for av in attrs:
+            if av.attribute is not None:
+                result[av.attribute.name] = av.raw_value
+        return result
 
     def get_score(self) -> Optional[float]:
         return get_last_score(self.db, self.model_id)

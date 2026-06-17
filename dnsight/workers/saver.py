@@ -145,14 +145,21 @@ def calculate_ram_score(specs: Dict[str, str]) -> Optional[float]:
     module_raw = specs.get(ATTR_RAM_MODULE)
     module = extract_number(module_raw)
     if module == 0:
-        # Если нет объёма модуля, используем total (иногда этого атрибута нет)
         module = total
         logger.info(f"Объём модуля не найден, используем суммарный: {module}")
 
+    # --- ИЗМЕНЕНИЯ ЗДЕСЬ: fallback для частоты ---
     freq_raw = specs.get(ATTR_RAM_FREQ)
     freq = extract_number(freq_raw)
     if freq == 0:
-        logger.warning(f"Не удалось извлечь частоту из '{freq_raw}'")
+        # Пробуем альтернативный ключ "Частота"
+        freq_raw_alt = specs.get("Частота")
+        if freq_raw_alt:
+            freq = extract_number(freq_raw_alt)
+            if freq != 0:
+                logger.info(f"Частота взята из альтернативного ключа 'Частота': {freq}")
+    if freq == 0:
+        logger.warning(f"Не удалось извлечь частоту из '{freq_raw}' (и из альтернатив)")
         return None
 
     cl_raw = specs.get(ATTR_RAM_CAS)

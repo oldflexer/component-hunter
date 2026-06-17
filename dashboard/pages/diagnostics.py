@@ -37,19 +37,17 @@ def render_problem_table(db: Session, title: str, df: pd.DataFrame, product_ids:
             with col1:
                 if st.button("✅ Да, удалить", key=f"confirm_yes_{key_suffix}"):
                     try:
-                        ids_str = ','.join(str(id_) for id_ in ids_to_delete)
-                        with db.connection() as conn:
-                            conn.execute(text(f"DELETE FROM benefit_history WHERE product_id IN ({ids_str})"))
-                            conn.execute(text(f"DELETE FROM price_history WHERE product_id IN ({ids_str})"))
-                            conn.execute(text(f"DELETE FROM attribute_values WHERE product_id IN ({ids_str})"))
-                            result = conn.execute(text(f"DELETE FROM products WHERE id IN ({ids_str})"))
-                            conn.commit()
-                        db.expire_all()
-                        st.success(f"Удалено {result.rowcount} товаров.")
+                        products_to_delete = db.query(Product).filter(Product.id.in_(ids_to_delete)).all()
+                        for prod in products_to_delete:
+                            db.delete(prod)
+                        db.commit()
+                        st.cache_data.clear()
+                        st.success(f"Удалено {len(products_to_delete)} товаров.")
                         st.session_state[f"show_confirm_{key_suffix}"] = False
                         st.session_state[f"to_delete_{key_suffix}"] = []
                         st.rerun()
                     except Exception as e:
+                        db.rollback()
                         st.error(f"Ошибка удаления: {type(e).__name__}: {e}")
             with col2:
                 if st.button("❌ Отмена", key=f"confirm_no_{key_suffix}"):
