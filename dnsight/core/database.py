@@ -1,9 +1,15 @@
 from sqlalchemy import create_engine, event
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, Session
 from ..config.settings import DATABASE_URL
 from .models import Base
 
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={'check_same_thread': False},
+    poolclass=NullPool
+)
 SessionLocal = sessionmaker(bind=engine)
 
 def get_db() -> Session:

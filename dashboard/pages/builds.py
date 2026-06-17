@@ -1,48 +1,62 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
+from concurrent.futures import ThreadPoolExecutor
+from dnsight.core.database import SessionLocal
 from dnsight.services.component_service import ComponentService
 from dnsight.config.settings import GPU_TARGET_MULTIPLIER, TDP_PHASE_RATIO, INF_REPLACEMENT, CACHE_TTL
 from dashboard.utils import get_last_price
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_cpu_data(db: Session):
-    service = ComponentService(db)
-    cpus = service.get_cpu_components()
-    return [{
-        "name": cpu.name,
-        "score": cpu.get_score(),
-        "benefit": cpu.get_benefit(),
-        "price": get_last_price(db, cpu._product.id) if cpu._product else 0,
-        "socket": cpu.get_socket(),
-        "tdp": cpu.get_tdp() if hasattr(cpu, "get_tdp") else 0,
-    } for cpu in cpus if cpu.get_score() is not None]
+@st.cache_data(ttl=CACHE_TTL)
+def get_cpu_data():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        cpus = service.get_cpu_components()
+        return [{
+            "name": cpu.name,
+            "score": cpu.get_score(),
+            "benefit": cpu.get_benefit(),
+            "price": get_last_price(db, cpu._product.id) if cpu._product else 0,
+            "socket": cpu.get_socket(),
+            "tdp": cpu.get_tdp() if hasattr(cpu, "get_tdp") else 0,
+        } for cpu in cpus if cpu.get_score() is not None]
+    finally:
+        db.close()
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_gpu_data(db: Session):
-    service = ComponentService(db)
-    gpus = service.get_gpu_components()
-    return [{
-        "name": gpu.name,
-        "score": gpu.get_score(),
-        "benefit": gpu.get_benefit(),
-        "price": get_last_price(db, gpu._product.id) if gpu._product else 0,
-    } for gpu in gpus if gpu.get_score() is not None]
+@st.cache_data(ttl=CACHE_TTL)
+def get_gpu_data():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        gpus = service.get_gpu_components()
+        return [{
+            "name": gpu.name,
+            "score": gpu.get_score(),
+            "benefit": gpu.get_benefit(),
+            "price": get_last_price(db, gpu._product.id) if gpu._product else 0,
+        } for gpu in gpus if gpu.get_score() is not None]
+    finally:
+        db.close()
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_mb_data(db: Session):
-    service = ComponentService(db)
-    mbs = service.get_mb_components()
-    return [{
-        "name": mb.name,
-        "benefit": mb.get_benefit(),
-        "socket": mb.get_socket(),
-        "price": get_last_price(db, mb.product_id) if mb.product_id else 0,
-        "phase": mb.get_phase() if hasattr(mb, "get_phase") else 0,
-    } for mb in mbs]
+@st.cache_data(ttl=CACHE_TTL)
+def get_mb_data():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        mbs = service.get_mb_components()
+        return [{
+            "name": mb.name,
+            "benefit": mb.get_benefit(),
+            "socket": mb.get_socket(),
+            "price": get_last_price(db, mb.product_id) if mb.product_id else 0,
+            "phase": mb.get_phase() if hasattr(mb, "get_phase") else 0,
+        } for mb in mbs]
+    finally:
+        db.close()
 
 
 def calculate_combined_gpu(cpu_benefit, gpu_benefit, cpu_delta, gpu_delta, cpu_score, gpu_score):
@@ -64,12 +78,10 @@ def calculate_combined_mb(cpu_benefit, mb_benefit, cpu_tdp, mb_phase):
     return combined
 
 
-def render_cpu_gpu_tab(db: Session):
+def render_cpu_gpu_tab(cpu_data, gpu_data):
     st.header("Подбор CPU + GPU")
     st.markdown("Для каждого процессора показаны три лучшие видеокарты по комбинированной оценке.")
-    cpus = get_cpu_data(db)
-    gpus = get_gpu_data(db)
-    if not cpus or not gpus:
+    if not cpu_data or not gpu_data:
         st.warning("Нет данных о CPU или GPU")
         return
 
@@ -80,14 +92,14 @@ def render_cpu_gpu_tab(db: Session):
         max_price = st.number_input("Максимальная стоимость (₽)", min_value=0, value=500_000, step=10000)
 
     all_pairs = []
-    for cpu in cpus:
+    for cpu in cpu_data:
         if cpu["price"] == 0:
             continue
         cpu_score = cpu["score"]
         if cpu_score is None:
             continue
         cpu_benefit = cpu["benefit"]
-        for gpu in gpus:
+        for gpu in gpu_data:
             if gpu["price"] == 0:
                 continue
             gpu_score = gpu["score"]
@@ -128,23 +140,21 @@ def render_cpu_gpu_tab(db: Session):
     st.dataframe(df[["CPU", "GPU", "Сумма баллов", "Стоимость (₽)", "Combined"]], width='stretch')
 
 
-def render_cpu_mb_tab(db: Session):
+def render_cpu_mb_tab(cpu_data, mb_data):
     st.header("Подбор CPU + Motherboard")
     st.markdown("Для каждого процессора показаны три самые выгодные материнские платы.")
-    cpus = get_cpu_data(db)
-    mbs = get_mb_data(db)
-    if not cpus or not mbs:
+    if not cpu_data or not mb_data:
         st.warning("Нет данных о CPU или MB")
         return
 
     mb_by_socket = {}
-    for mb in mbs:
+    for mb in mb_data:
         socket = mb["socket"]
         if socket:
             mb_by_socket.setdefault(socket, []).append(mb)
 
     all_pairs = []
-    for cpu in cpus:
+    for cpu in cpu_data:
         cpu_socket = cpu["socket"]
         if not cpu_socket or cpu_socket not in mb_by_socket:
             continue
@@ -180,8 +190,17 @@ def render_cpu_mb_tab(db: Session):
 
 
 def render(db: Session):
+    # Загружаем данные параллельно
+    with ThreadPoolExecutor() as executor:
+        future_cpu = executor.submit(get_cpu_data)
+        future_gpu = executor.submit(get_gpu_data)
+        future_mb = executor.submit(get_mb_data)
+        cpu_data = future_cpu.result()
+        gpu_data = future_gpu.result()
+        mb_data = future_mb.result()
+
     tabs = st.tabs(["CPU+GPU", "CPU+MB"])
     with tabs[0]:
-        render_cpu_gpu_tab(db)
+        render_cpu_gpu_tab(cpu_data, gpu_data)
     with tabs[1]:
-        render_cpu_mb_tab(db)
+        render_cpu_mb_tab(cpu_data, mb_data)

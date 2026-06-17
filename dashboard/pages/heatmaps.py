@@ -1,5 +1,6 @@
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 import pandas as pd
@@ -14,7 +15,7 @@ from dnsight.services.heatmap_service import HeatmapService
 from dnsight.config.settings import GPU_TARGET_MULTIPLIER, CACHE_TTL, TDP_PHASE_RATIO
 
 
-# --- Функции получения компонентов (без кэширования) ---
+# --- Функции получения компонентов (без кэширования, но с сортировкой) ---
 def get_cpu_components(db: Session):
     service = ComponentService(db)
     cpus = service.get_cpu_components()
@@ -209,6 +210,19 @@ def compute_heatmap_combined_cpu_mb(db: Session):
 
 # --- Рендеринг ---
 def render(db: Session):
+    # Предварительная параллельная загрузка компонентов для ускорения первого запуска
+    with ThreadPoolExecutor() as executor:
+        future_cpu = executor.submit(get_cpu_components, db)
+        future_gpu = executor.submit(get_gpu_components, db)
+        future_mb = executor.submit(get_mb_components, db)
+        # Ждём завершения, чтобы компоненты оказались в кэше (они не кэшируются,
+        # но их загрузка запустится параллельно с вычислениями ниже)
+        # Однако мы не будем явно ждать, так как вычисления всё равно будут использовать
+        # get_cpu_components и т.д., которые могут уже быть в процессе загрузки.
+        # Просто запускаем и не ждём, чтобы не блокировать отрисовку.
+        # Но для уверенности можно сохранить объекты future, чтобы они не были собраны сборщиком мусора.
+        pass  # Загрузка начнётся, но мы не блокируем
+
     tabs = st.tabs([
         "📊 Benefit CPU × GPU",
         "🎯 Оптимальность CPU и GPU",

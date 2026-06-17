@@ -1,57 +1,61 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy.orm import Session
-from dnsight.core.models import Product
+from concurrent.futures import ThreadPoolExecutor
+from dnsight.core.database import SessionLocal
 from dnsight.services.component_service import ComponentService
 from dnsight.config.settings import GPU_TARGET_MULTIPLIER, CACHE_TTL
 from dashboard.utils import get_last_price
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_cpu_list(db: Session):
-    service = ComponentService(db)
-    cpus = service.get_cpu_components()
-    result = []
-    for cpu in cpus:
-        score = cpu.get_score()
-        if score is not None:
-            # Добавляем model_id и product_id для получения цены
-            result.append((
-                cpu.name, score, cpu.get_socket(), cpu.get_benefit(),
-                cpu.model_id, cpu._product.id if cpu._product else None
-            ))
-    return result
+@st.cache_data(ttl=CACHE_TTL)
+def get_cpu_list():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        cpus = service.get_cpu_components()
+        return [(cpu.name, cpu.get_score(), cpu.get_socket(), cpu.get_benefit(), cpu._product.id if cpu._product else None) for cpu in cpus if cpu.get_score() is not None]
+    finally:
+        db.close()
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_gpu_list(db: Session):
-    service = ComponentService(db)
-    gpus = service.get_gpu_components()
-    result = []
-    for gpu in gpus:
-        score = gpu.get_score()
-        if score is not None:
-            result.append((
-                gpu.name, score, gpu.get_benefit(),
-                gpu.model_id, gpu._product.id if gpu._product else None
-            ))
-    return result
+@st.cache_data(ttl=CACHE_TTL)
+def get_gpu_list():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        gpus = service.get_gpu_components()
+        return [(gpu.name, gpu.get_score(), gpu.get_benefit(), gpu._product.id if gpu._product else None) for gpu in gpus if gpu.get_score() is not None]
+    finally:
+        db.close()
 
 
-@st.cache_data(ttl=CACHE_TTL, hash_funcs={Session: lambda _: None})
-def get_mb_list(db: Session):
-    service = ComponentService(db)
-    mbs = service.get_mb_components()
-    return [(mb.name, mb.get_socket(), mb.get_benefit(), mb.product_id) for mb in mbs]
+@st.cache_data(ttl=CACHE_TTL)
+def get_mb_list():
+    db = SessionLocal()
+    try:
+        service = ComponentService(db)
+        mbs = service.get_mb_components()
+        return [(mb.name, mb.get_socket(), mb.get_benefit(), mb.product_id) for mb in mbs]
+    finally:
+        db.close()
 
 
 def render(db: Session):
+    # Загружаем все списки параллельно
+    with ThreadPoolExecutor() as executor:
+        future_cpu = executor.submit(get_cpu_list)
+        future_gpu = executor.submit(get_gpu_list)
+        future_mb = executor.submit(get_mb_list)
+        cpus = future_cpu.result()
+        gpus = future_gpu.result()
+        mbs = future_mb.result()
+
     tabs = st.tabs(["Подбор GPU под CPU", "Подбор CPU под GPU", "Подбор CPU под MB", "Подбор MB под CPU"])
 
     # ---- Подбор GPU под CPU ----
     with tabs[0]:
         st.subheader("Выберите CPU, чтобы увидеть рекомендуемые GPU")
-        cpus = get_cpu_list(db)
         if not cpus:
             st.info("Нет CPU с баллами PassMark")
         else:
@@ -65,9 +69,10 @@ def render(db: Session):
                 target_gpu_score = cpu_score * GPU_TARGET_MULTIPLIER
                 st.info(f"Целевой балл GPU: {target_gpu_score:.0f}")
 
-                gpus = get_gpu_list(db)
                 gpu_data = []
-                for (gpu_name, gpu_score, gpu_benefit, gpu_model_id, gpu_product_id) in gpus:
+                for gpu_name, gpu_score, gpu_benefit, gpu_product_id in gpus:
+                    if gpu_score is None:
+                        continue
                     price = get_last_price(db, gpu_product_id) if gpu_product_id else 0
                     deviation = abs(gpu_score - target_gpu_score) / target_gpu_score if target_gpu_score > 0 else 999
                     gpu_data.append({
@@ -90,7 +95,6 @@ def render(db: Session):
     # ---- Подбор CPU под GPU ----
     with tabs[1]:
         st.subheader("Выберите GPU, чтобы увидеть рекомендуемые CPU")
-        gpus = get_gpu_list(db)
         if not gpus:
             st.info("Нет GPU с баллами PassMark")
         else:
@@ -104,9 +108,10 @@ def render(db: Session):
                 target_cpu_score = gpu_score / GPU_TARGET_MULTIPLIER
                 st.info(f"Целевой балл CPU: {target_cpu_score:.0f}")
 
-                cpus = get_cpu_list(db)
                 cpu_data = []
-                for (cpu_name, cpu_score, cpu_socket, cpu_benefit, cpu_model_id, cpu_product_id) in cpus:
+                for cpu_name, cpu_score, cpu_socket, cpu_benefit, cpu_product_id in cpus:
+                    if cpu_score is None:
+                        continue
                     price = get_last_price(db, cpu_product_id) if cpu_product_id else 0
                     deviation = abs(cpu_score - target_cpu_score) / target_cpu_score if target_cpu_score > 0 else 999
                     cpu_data.append({
@@ -129,7 +134,6 @@ def render(db: Session):
     # ---- Подбор CPU под MB ----
     with tabs[2]:
         st.subheader("Выберите материнскую плату, чтобы увидеть совместимые CPU")
-        mbs = get_mb_list(db)
         if not mbs:
             st.info("Нет MB с указанным сокетом")
         else:
@@ -139,9 +143,10 @@ def render(db: Session):
             socket = selected_mb[1]
             st.info(f"Сокет: {socket}")
 
-            cpus = get_cpu_list(db)
             compatible_cpu = []
-            for (cpu_name, cpu_score, cpu_socket, cpu_benefit, cpu_model_id, cpu_product_id) in cpus:
+            for cpu_name, cpu_score, cpu_socket, cpu_benefit, cpu_product_id in cpus:
+                if cpu_score is None:
+                    continue
                 if cpu_socket == socket:
                     price = get_last_price(db, cpu_product_id) if cpu_product_id else 0
                     compatible_cpu.append({
@@ -162,7 +167,6 @@ def render(db: Session):
     # ---- Подбор MB под CPU ----
     with tabs[3]:
         st.subheader("Выберите процессор, чтобы увидеть совместимые материнские платы")
-        cpus = get_cpu_list(db)
         if not cpus:
             st.info("Нет CPU с сокетом")
         else:
@@ -172,7 +176,6 @@ def render(db: Session):
             socket = selected_cpu[2]
             st.info(f"Сокет: {socket}")
 
-            mbs = get_mb_list(db)
             compatible_mb = []
             for mb_name, mb_socket, mb_benefit, mb_product_id in mbs:
                 if mb_socket == socket:
