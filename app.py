@@ -13,9 +13,45 @@ from dnsight.workers.update_passmark import update_passmark_scores
 from dnsight.config.settings import DNS_CATEGORIES
 from dashboard.pages import summary, tables, diagnostics, forms, graphs, analytics, queries, selection, heatmaps, builds
 from dnsight.config.settings import CATEGORY_MAPPING as CATEGORY_TO_TYPE
+import base64
+from pathlib import Path
 
-st.set_page_config(page_title="DNSight Dashboard", layout="wide")
-st.title("📊 DNSight")
+def get_image_base64(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+logo_base64 = get_image_base64("static/logo.png")
+
+st.set_page_config(page_title="Component Hunter", layout="wide", page_icon="static/favicon.ico")
+
+st.markdown("""
+<style>
+    [data-testid="stSidebarHeader"] {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+    .stMainBlockContainer {
+        padding-top: 0px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+    [data-testid="stSidebarContent"] {
+        padding-top: 10px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+""", unsafe_allow_html=True)
 
 init_db()
 db = get_db()
@@ -62,6 +98,13 @@ def run_full_update():
 # Боковая панель
 # ------------------------------------------------------------------
 with st.sidebar:
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
+        <img src="data:image/png;base64,{logo_base64}" width="100" style="vertical-align: middle;">
+        <h1 style="margin: 0; vertical-align: middle; font-size: 2rem;">Component Hunter</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.header("Управление")
     if st.button("🔄 Полный цикл", width='stretch'):
         with st.spinner("Полный цикл..."):

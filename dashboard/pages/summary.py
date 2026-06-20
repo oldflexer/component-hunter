@@ -136,21 +136,20 @@ def render(db: Session):  # db используется только для по
 
     # Определяем эмодзи для каждого типа (можно динамически, но пока оставим)
     emojis = {
-        "CPU": "🔲",
-        "GPU": "🎮",
-        "Motherboard": "🖥",
-        "RAM": "🧠",
-        "PSU": "⚡",
-        "Case": "📦",
-        "Cooler": "❄️",
-        "Storage": "💾"
+    "CPU": '<i class="fas fa-microchip"></i>',
+    "GPU": '<i class="fas fa-vr-cardboard"></i>',
+    "Motherboard": '<i class="fas fa-border-all"></i>',
+    "RAM": '<i class="fas fa-memory"></i>',
+    "PSU": '<i class="fas fa-plug"></i>',
+    "Case": '<i class="fas fa-desktop"></i>',
+    "Cooler": '<i class="fas fa-fan"></i>',
+    "Storage": '<i class="fas fa-hdd"></i>'
     }
 
     cols = st.columns(len(component_types))
     for idx, ct in enumerate(component_types):
         with cols[idx]:
-            emoji = emojis.get(ct, "📦")
-            st.subheader(f"{emoji} {ct}")
+            st.markdown(f"<h3>{emojis.get(ct, '')} {ct}</h3>", unsafe_allow_html=True)
             stats_data = stats[ct]
             if stats_data:
                 st.metric("Средняя цена (₽)", f"{stats_data['price_now']:.0f}",
@@ -162,11 +161,3 @@ def render(db: Session):  # db используется только для по
                           delta=f"{stats_data['benefit_now'] - stats_data['benefit_prev']:.4f}")
             else:
                 st.info(f"Нет данных по {ct}")
-
-            st.subheader(f"🏆 Топ-3 {ct} по Benefit")
-            top_items = tops[ct]
-            if top_items:
-                for i, item in enumerate(top_items, 1):
-                    st.write(f"{i}. **{item['name']}** – Benefit {item['benefit']:.4f}")
-            else:
-                st.info("Нет данных")
