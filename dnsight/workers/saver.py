@@ -346,46 +346,40 @@ def save_product_and_attributes(
     if type_name == "Motherboard" and model:
         score = calculate_motherboard_score(specs)
         if score is not None:
-            existing_score = db.query(ModelScore).filter_by(model_id=model.id).order_by(ModelScore.updated_at.desc()).first()
-            if not existing_score or existing_score.score != score:
-                new_score = ModelScore(
-                    model_id=model.id,
-                    score=score,
-                    source="dns_mb_formula",
-                    updated_at=datetime.utcnow()
-                )
-                db.add(new_score)
-                logger.info(f"Добавлен скор {score} для модели MB {model.name}")
+            new_score = ModelScore(
+                model_id=model.id,
+                score=score,
+                source="dns_mb_formula",
+                updated_at=datetime.utcnow()
+            )
+            db.add(new_score)
+            logger.info(f"Добавлен скор {score} для модели MB {model.name}")
 
     # Для RAM вычисляем скор
     if type_name == "RAM" and model:
         score = calculate_ram_score(specs)
         if score is not None:
-            existing_score = db.query(ModelScore).filter_by(model_id=model.id).order_by(ModelScore.updated_at.desc()).first()
-            if not existing_score or existing_score.score != score:
-                new_score = ModelScore(
-                    model_id=model.id,
-                    score=score,
-                    source="ram_formula",
-                    updated_at=datetime.utcnow()
-                )
-                db.add(new_score)
-                logger.info(f"Добавлен скор {score} для модели RAM {model.name}")
+            new_score = ModelScore(
+                model_id=model.id,
+                score=score,
+                source="ram_formula",
+                updated_at=datetime.utcnow()
+            )
+            db.add(new_score)
+            logger.info(f"Добавлен скор {score} для модели RAM {model.name}")
 
     # Для PSU вычисляем скор
     if type_name == "PSU" and model:
         score = calculate_psu_score(specs)
         if score is not None:
-            existing_score = db.query(ModelScore).filter_by(model_id=model.id).order_by(ModelScore.updated_at.desc()).first()
-            if not existing_score or existing_score.score != score:
-                new_score = ModelScore(
-                    model_id=model.id,
-                    score=score,
-                    source="psu_formula",
-                    updated_at=datetime.utcnow()
-                )
-                db.add(new_score)
-                logger.info(f"Добавлен скор {score} для модели PSU {model.name}")
+            new_score = ModelScore(
+                model_id=model.id,
+                score=score,
+                source="psu_formula",
+                updated_at=datetime.utcnow()
+            )
+            db.add(new_score)
+            logger.info(f"Добавлен скор {score} для модели PSU {model.name}")
 
     db.commit()
     logger.info(f"Сохранён продукт {product_name} с {len(specs)} характеристиками")

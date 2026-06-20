@@ -23,11 +23,11 @@ LOG_FILE = os.getenv("LOG_FILE", "logs/app.log")
 
 # --- DNS категории (можно переопределить через .env) ---
 DNS_CATEGORIES = {
-    # "cpu": os.getenv("DNS_CPU_URL", "https://www.dns-shop.ru/catalog/17a899cd16404e77/processory/"),
-    # "gpu": os.getenv("DNS_GPU_URL", "https://www.dns-shop.ru/catalog/17a89aab16404e77/videokarty/"),
-    # "motherboard": os.getenv("DNS_MOTHERBOARD_URL", "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/"),
-    # "ram_dimm": os.getenv("DNS_RAM_DIMM_URL", "https://www.dns-shop.ru/catalog/17a89a3916404e77/operativnaa-pamat-dimm/"),
-    # "ram_sodimm": os.getenv("DNS_RAM_SODIMM_URL", "https://www.dns-shop.ru/catalog/17a9b91b16404e77/operativnaa-pamat-so-dimm/"),
+    "cpu": os.getenv("DNS_CPU_URL", "https://www.dns-shop.ru/catalog/17a899cd16404e77/processory/"),
+    "gpu": os.getenv("DNS_GPU_URL", "https://www.dns-shop.ru/catalog/17a89aab16404e77/videokarty/"),
+    "motherboard": os.getenv("DNS_MOTHERBOARD_URL", "https://www.dns-shop.ru/catalog/17a89a0416404e77/materinskie-platy/"),
+    "ram_dimm": os.getenv("DNS_RAM_DIMM_URL", "https://www.dns-shop.ru/catalog/17a89a3916404e77/operativnaa-pamat-dimm/"),
+    "ram_sodimm": os.getenv("DNS_RAM_SODIMM_URL", "https://www.dns-shop.ru/catalog/17a9b91b16404e77/operativnaa-pamat-so-dimm/"),
     "psu": os.getenv("DNS_PSU_URL", "https://www.dns-shop.ru/catalog/17a89c2216404e77/bloki-pitania/"),
     # "case": os.getenv("DNS_CASE_URL", "https://www.dns-shop.ru/catalog/17a89c5616404e77/korpusa/"),
     # "cooler": os.getenv("DNS_COOLER_URL", "https://www.dns-shop.ru/catalog/17a9cc2d16404e77/kulery-dla-processorov/"),

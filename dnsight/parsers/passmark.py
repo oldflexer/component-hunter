@@ -32,7 +32,7 @@ class PassMarkParser:
             options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        self.driver = uc.Chrome(version_main=148, options=options)
+        self.driver = uc.Chrome(version_main=149, options=options)
         self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
         time.sleep(5)
         self.driver.switch_to.window(self.driver.current_window_handle)
