@@ -42,6 +42,8 @@ def get_mb_list():
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-layer-group'></i> Подбор компонентов</h2>", unsafe_allow_html=True)
+
     # Загружаем все списки параллельно
     with ThreadPoolExecutor() as executor:
         future_cpu = executor.submit(get_cpu_list)

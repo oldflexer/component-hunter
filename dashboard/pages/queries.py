@@ -65,6 +65,8 @@ def render_table(component_data: list, component_type: str):
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-file-circle-question'></i> Запросы</h2>", unsafe_allow_html=True)
+
     product_types = db.query(ProductType).order_by(ProductType.name).all()
     types_with_products = [
         pt for pt in product_types

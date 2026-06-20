@@ -190,6 +190,8 @@ def render_cpu_mb_tab(cpu_data, mb_data):
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-circle-check'></i> ПК-подбор</h2>", unsafe_allow_html=True)
+
     # Загружаем данные параллельно
     with ThreadPoolExecutor() as executor:
         future_cpu = executor.submit(get_cpu_data)

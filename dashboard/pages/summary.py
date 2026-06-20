@@ -117,7 +117,7 @@ def get_top_benefit(component_type: str, top_n: int = 3):
 
 
 def render(db: Session):  # db используется только для получения типов, но можно не использовать
-    st.header("📈 Общая сводка")
+    st.markdown("<h2><i class='fas fa-chart-simple'></i> Общая сводка</h2>", unsafe_allow_html=True)
 
     # Получаем типы, для которых есть продукты (используем переданную сессию)
     product_types = db.query(ProductType).order_by(ProductType.name).all()

@@ -68,6 +68,8 @@ def plot_product_history(db: Session, component_type: str):
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-chart-line'></i> Графики</h2>", unsafe_allow_html=True)
+
     product_types = db.query(ProductType).order_by(ProductType.name).all()
     types_with_products = [
         pt for pt in product_types

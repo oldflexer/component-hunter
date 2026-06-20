@@ -210,6 +210,8 @@ def compute_heatmap_combined_cpu_mb(db: Session):
 
 # --- Рендеринг ---
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-square-poll-horizontal'></i> Тепловые карты</h2>", unsafe_allow_html=True)
+
     # Предварительная параллельная загрузка компонентов для ускорения первого запуска
     with ThreadPoolExecutor() as executor:
         future_cpu = executor.submit(get_cpu_components, db)

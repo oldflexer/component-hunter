@@ -97,6 +97,8 @@ def get_diagnostic_data(type_name: str, type_id: int):
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-triangle-exclamation'></i> Диагностика</h2>", unsafe_allow_html=True)
+
     # Получаем типы через переданную сессию
     product_types = db.query(ProductType).order_by(ProductType.name).all()
     types_with_products = [

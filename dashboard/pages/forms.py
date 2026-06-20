@@ -23,7 +23,7 @@ def edit_attributes(db: Session, component_type: str):
 
     # ----- Управление ценой -----
     current_price = get_last_price(db, selected_id)
-    st.subheader("💰 Цена")
+    st.markdown("<h3><i class='fas fa-coins'></i> Цена</h3>", unsafe_allow_html=True)
     col_price1, col_price2 = st.columns(2)
     with col_price1:
         st.metric("Текущая цена (₽)", f"{current_price:.0f}" if current_price else "Нет данных")
@@ -41,7 +41,7 @@ def edit_attributes(db: Session, component_type: str):
 
     # ----- Управление скором (для типов, у которых есть модели) -----
     if product.model_id:
-        st.subheader("🎯 Ручное изменение скора")
+        st.markdown("<h3><i class='fas fa-bullseye'></i> Ручное изменение скора</h3>", unsafe_allow_html=True)
         col_score1, col_score2 = st.columns(2)
         with col_score1:
             current_score = get_last_score(db, product.model_id)
@@ -117,6 +117,8 @@ def edit_attributes(db: Session, component_type: str):
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-pen-to-square'></i> Формы</h2>", unsafe_allow_html=True)
+
     # Получаем все типы продуктов, для которых есть хотя бы один продукт
     product_types = db.query(ProductType).order_by(ProductType.name).all()
     types_with_products = [

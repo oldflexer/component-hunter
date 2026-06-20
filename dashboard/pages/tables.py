@@ -194,6 +194,8 @@ def render_table_with_data_editor(db: Session, table_name: str, query, id_column
 
 
 def render(db: Session):
+    st.markdown("<h2><i class='fas fa-table-list'></i> Таблицы</h2>", unsafe_allow_html=True)
+
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
         ["product_types", "models", "model_scores", "products",
          "attributes", "attribute_values", "price_history", "benefit_history"]
