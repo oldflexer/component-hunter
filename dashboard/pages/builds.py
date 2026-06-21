@@ -54,6 +54,7 @@ def get_mb_data():
             "socket": mb.get_socket(),
             "price": get_last_price(db, mb.product_id) if mb.product_id else 0,
             "phase": mb.get_phase() if hasattr(mb, "get_phase") else 0,
+            "score": mb.get_score() or 0,
         } for mb in mbs]
     finally:
         db.close()
@@ -87,9 +88,9 @@ def render_cpu_gpu_tab(cpu_data, gpu_data):
 
     col1, col2 = st.columns(2)
     with col1:
-        min_score = st.number_input("Минимальная сумма баллов CPU+GPU", min_value=0, value=0, step=1000)
+        min_score = st.number_input("Минимальная сумма баллов CPU+GPU", min_value=0, value=0, step=1000, key="min_score_gpu")
     with col2:
-        max_price = st.number_input("Максимальная стоимость (₽)", min_value=0, value=500_000, step=10000)
+        max_price = st.number_input("Максимальная стоимость (₽)", min_value=0, value=500_000, step=10000, key="max_price_gpu")
 
     all_pairs = []
     for cpu in cpu_data:
@@ -147,6 +148,13 @@ def render_cpu_mb_tab(cpu_data, mb_data):
         st.warning("Нет данных о CPU или MB")
         return
 
+    # Фильтры (аналогично CPU+GPU)
+    col1, col2 = st.columns(2)
+    with col1:
+        min_score = st.number_input("Минимальная сумма баллов CPU+MB", min_value=0, value=0, step=1000, key="min_score_mb")
+    with col2:
+        max_price = st.number_input("Максимальная стоимость (₽)", min_value=0, value=500_000, step=10000, key="max_price_mb")
+
     mb_by_socket = {}
     for mb in mb_data:
         socket = mb["socket"]
@@ -158,7 +166,16 @@ def render_cpu_mb_tab(cpu_data, mb_data):
         cpu_socket = cpu["socket"]
         if not cpu_socket or cpu_socket not in mb_by_socket:
             continue
+        cpu_score = cpu["score"] or 0
+        cpu_price = cpu["price"] or 0
         for mb in mb_by_socket[cpu_socket]:
+            mb_score = mb["score"] or 0
+            mb_price = mb["price"] or 0
+            total_score = cpu_score + mb_score
+            total_price = cpu_price + mb_price
+            # Фильтрация
+            if total_score < min_score or total_price > max_price:
+                continue
             combined = calculate_combined_mb(
                 cpu["benefit"],
                 mb["benefit"],
@@ -168,13 +185,16 @@ def render_cpu_mb_tab(cpu_data, mb_data):
             all_pairs.append({
                 "CPU": cpu["name"],
                 "Motherboard": mb["name"],
+                "Сумма баллов": total_score,
+                "Стоимость (₽)": total_price,
                 "Combined": combined,
             })
 
     if not all_pairs:
-        st.warning("Нет совместимых пар.")
+        st.warning("Нет пар, удовлетворяющих условиям.")
         return
 
+    # Группировка по CPU и выбор топ-3 MB
     cpu_groups = {}
     for pair in all_pairs:
         cpu_name = pair["CPU"]
@@ -186,7 +206,7 @@ def render_cpu_mb_tab(cpu_data, mb_data):
 
     df = pd.DataFrame(top_pairs)
     st.subheader(f"Топ-3 материнские платы для каждого процессора (всего {len(df)} записей)")
-    st.dataframe(df[["CPU", "Motherboard", "Combined"]], width='stretch')
+    st.dataframe(df[["CPU", "Motherboard", "Сумма баллов", "Стоимость (₽)", "Combined"]], width='stretch')
 
 
 def render(db: Session):
