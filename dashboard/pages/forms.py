@@ -34,7 +34,10 @@ def edit_attributes(db: Session, component_type: str):
                 price_history = PriceHistory(product_id=selected_id, price=new_price, timestamp=datetime.utcnow())
                 db.add(price_history)
                 db.commit()
-                st.success(f"Цена {new_price:.0f} ₽ добавлена в историю!")
+                # Пересчитываем Benefit для этого продукта после добавления цены
+                update_benefit_for_product(product, db)
+                db.commit()
+                st.success(f"Цена {new_price:.0f} ₽ добавлена в историю! Benefit пересчитан.")
                 st.rerun()
         elif new_price == current_price and current_price is not None:
             st.info("Новая цена совпадает с текущей, изменений не требуется.")
@@ -57,10 +60,11 @@ def edit_attributes(db: Session, component_type: str):
                         updated_at=datetime.utcnow()
                     )
                     db.add(new_score_record)
+                    # Пересчитываем Benefit для всех продуктов этой модели
                     for prod in db.query(Product).filter_by(model_id=product.model_id).all():
                         update_benefit_for_product(prod, db)
                     db.commit()
-                    st.success(f"Скор {new_score:.0f} установлен!")
+                    st.success(f"Скор {new_score:.0f} установлен! Benefit пересчитан для всех продуктов модели.")
                     st.rerun()
 
     # ----- Редактирование характеристик -----

@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from ..config.settings import DNS_CATEGORIES, REQUEST_TIMEOUT
 from ..core.logging import get_logger
 
+COOLDOWN_SECONDS = 300  # 5 минут
 
 class DNSParser:
     def __init__(self, log_file="logs/parser.log", log_level=logging.DEBUG, headless: bool = False):
@@ -37,9 +38,21 @@ class DNSParser:
         self.driver.set_page_load_timeout(REQUEST_TIMEOUT)
         time.sleep(random.uniform(5, 10))
         self.driver.switch_to.window(self.driver.current_window_handle)
-        self.logger.info(f"undetected ChromeDriver инициализирован (версия 148, eager strategy, headless={self.headless})")
+        self.logger.info(f"undetected ChromeDriver инициализирован (версия 149, eager strategy, headless={self.headless})")
         
         return self.driver
+
+    def _handle_error_page(self, driver) -> bool:
+        """Проверяет, есть ли на странице элемент error-code, и если да – делает cooldown."""
+        try:
+            error_elem = driver.find_element(By.CSS_SELECTOR, 'div.error-code')
+            if error_elem:
+                self.logger.warning("Обнаружена страница с ошибкой, применяем cooldown 5 минут...")
+                time.sleep(COOLDOWN_SECONDS)
+                return True
+        except:
+            pass
+        return False
 
     def parse_category(self, category_key: str, max_pages: Optional[int] = None, max_items: Optional[int] = None) -> List[Dict]:
         if category_key not in DNS_CATEGORIES:
@@ -48,20 +61,24 @@ class DNSParser:
         url = DNS_CATEGORIES[category_key]
         driver = self._get_driver()
 
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 driver.get(url)
+                if self._handle_error_page(driver):
+                    continue
                 break
             except Exception as e:
-                self.logger.warning(f"Ошибка загрузки {url}, попытка {attempt+1}/3: {e}")
+                self.logger.warning(f"Ошибка загрузки {url}, попытка {attempt+1}/4: {e}")
+                if attempt == 3:
+                    self.logger.error(f"Не удалось загрузить {url} после 4 попыток")
+                    return []
                 time.sleep(random.uniform(5, 10))
         else:
-            self.logger.error(f"Не удалось загрузить {url} после 3 попыток")
+            self.logger.error(f"Не удалось загрузить {url} после всех попыток")
             return []
 
         # --- Смена города на "Каменск-Уральский" ---
         try:
-            # 1. Кликнуть на текущий город (Москва)
             city_selector = 'span.city-select__text_90n, span[data-analytics-city-id], span[class*="city-select__text"]'
             city_element = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, city_selector))
@@ -70,7 +87,6 @@ class DNSParser:
             self.logger.info("Кликнут текущий город, ожидаем модальное окно")
             time.sleep(random.uniform(5, 10))
 
-            # 2. Найти поле ввода города
             input_selector = 'input[data-city-select="city-modal-input-attr"], input[placeholder="Найти город"]'
             city_input = WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, input_selector))
@@ -80,17 +96,16 @@ class DNSParser:
             self.logger.info("Введён город 'Каменск-Уральский'")
             time.sleep(random.uniform(5, 10))
 
-            # 3. Найти кнопку с нужным городом и кликнуть
             target_button = WebDriverWait(driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, "//button//mark[contains(text(),'Каменск-Уральский')]/ancestor::button"))
             )
             target_button.click()
             self.logger.info("Выбран город 'Каменск-Уральский'")
-            time.sleep(random.uniform(5, 10))  # ожидание перезагрузки страницы
+            time.sleep(random.uniform(5, 10))
         except Exception as e:
             self.logger.warning(f"Не удалось сменить город: {e}. Продолжаем с текущим городом.")
 
-        # --- Далее существующий код парсинга ---
+        # --- Парсинг ---
         self.logger.info(f"Начинаем парсинг категории {category_key} (бесконечная прокрутка)")
 
         products = []
@@ -98,7 +113,6 @@ class DNSParser:
         last_height = 0
         scroll_attempts = 0
 
-        # Ждём появления первых карточек
         try:
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'div.catalog-product'))
@@ -125,7 +139,6 @@ class DNSParser:
                     continue
                 seen_urls.add(product_url)
 
-                # Поиск цены
                 price_elem = card.select_one('div.product-buy__price')
                 if not price_elem:
                     price_elem = card.select_one('div.catalog-product__price span.price')
@@ -189,19 +202,39 @@ class DNSParser:
         else:
             characteristics_url = product_url.rstrip('/') + '/characteristics/'
 
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 driver.get(characteristics_url)
+                if self._handle_error_page(driver):
+                    continue
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, 'body'))
                 )
                 break
             except Exception as e:
-                self.logger.warning(f"Ошибка загрузки {characteristics_url}: {e}, попытка {attempt+1}/3")
-                time.sleep(random.uniform(5, 10))
-                if attempt == 2:
+                self.logger.warning(f"Ошибка загрузки {characteristics_url}: {e}, попытка {attempt+1}/4")
+                if attempt == 3:
                     return {}
+                time.sleep(random.uniform(5, 10))
+        else:
+            self.logger.error(f"Не удалось загрузить {characteristics_url} после всех попыток")
+            return {}
 
+        # Проверяем, не попали ли на страницу аналогов
+        try:
+            analog_link = driver.find_element(By.CSS_SELECTOR, 'a.header-product__link[href*="/product/characteristics/"]')
+            if analog_link:
+                new_url = analog_link.get_attribute('href')
+                self.logger.info(f"Обнаружена страница аналогов, переходим по ссылке {new_url}")
+                driver.get(new_url)
+                time.sleep(random.uniform(3, 6))
+                if self._handle_error_page(driver):
+                    self.logger.error("Страница характеристик после перехода содержит ошибку")
+                    return {}
+        except:
+            pass
+
+        # Раскрываем все характеристики
         try:
             expand_btn = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '.product-characteristics__expand'))

@@ -171,7 +171,7 @@ def calculate_ram_score(specs: Dict[str, str]) -> Optional[float]:
     ecc_coeff = get_ecc_coeff(specs.get(ATTR_RAM_ECC))
     heatsink_coeff = get_heatsink_coeff(specs.get(ATTR_RAM_HEATSINK))
 
-    score = total * module * ecc_coeff * freq * (1.0 / cl) * heatsink_coeff
+    score = (total * module * ecc_coeff * freq * (1.0 / cl) * heatsink_coeff) ** (1 / 2)
     logger.info(f"Вычислен скор для RAM: {score:.2f} (total={total}, module={module}, ecc={ecc_coeff}, "
                 f"freq={freq}, cl={cl}, heatsink={heatsink_coeff})")
     return score
@@ -264,7 +264,7 @@ def calculate_psu_score(specs: Dict[str, str]) -> Optional[float]:
     cables_coeff = get_cables_coeff(specs.get(ATTR_PSU_CABLES))
     sleeving_coeff = get_sleeving_coeff(specs.get(ATTR_PSU_SLEEVING))
 
-    score = power * cert_coeff * standard_coeff * protections_coeff * cables_coeff * sleeving_coeff
+    score = (power * cert_coeff * standard_coeff * protections_coeff * cables_coeff * sleeving_coeff) ** (1 / 2)
     logger.info(f"Вычислен скор для PSU: {score:.2f} (мощность={power}, сертификат={cert_coeff}, "
                 f"стандарт={standard_coeff}, защиты={protections_coeff}, кабели={cables_coeff}, оплетка={sleeving_coeff})")
     return score

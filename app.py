@@ -10,6 +10,7 @@ from dnsight.core.database import init_db, get_db
 from dnsight.parsers.dns import DNSParser
 from dnsight.workers.saver import save_product_and_attributes
 from dnsight.workers.update_passmark import update_passmark_scores
+from dnsight.workers.recalc import recalculate_scores
 from dnsight.config.settings import DNS_CATEGORIES
 from dashboard.pages import summary, tables, diagnostics, forms, graphs, analytics, queries, selection, heatmaps, builds
 from dnsight.config.settings import CATEGORY_MAPPING as CATEGORY_TO_TYPE
@@ -57,11 +58,13 @@ init_db()
 db = get_db()
 
 # ------------------------------------------------------------------
-# Функции для кнопок управления (можно оставить здесь или вынести)
+# Функции для кнопок управления
 # ------------------------------------------------------------------
-def run_dns_parsing():
+def run_dns_parsing() -> set:
+    """Запускает парсинг DNS и возвращает множество обработанных типов (CPU, GPU, ...)."""
     dashboard_logger = get_logger("dashboard", "logs/dashboard.log", mode='w')
     parser = DNSParser(headless=False)
+    processed_types = set()
     try:
         for cat_key, type_name in CATEGORY_TO_TYPE.items():
             if cat_key not in DNS_CATEGORIES:
@@ -75,6 +78,7 @@ def run_dns_parsing():
                 specs = parser.parse_product_details(prod['url'])
                 save_product_and_attributes(db, type_name, prod['name'], prod['url'], prod['price'], specs)
                 time.sleep(0.5)
+            processed_types.add(type_name)
     except Exception as e:
         dashboard_logger.exception("Ошибка в процессе парсинга DNS")
         st.error(f"Ошибка DNS: {e}")
@@ -82,17 +86,38 @@ def run_dns_parsing():
         parser.close()
     st.success("Парсинг DNS завершён!")
     dashboard_logger.info("Парсинг DNS завершён")
+    return processed_types
 
-def run_passmark_update():
+def run_passmark_update(update_cpu: bool = True, update_gpu: bool = True):
+    """Запускает обновление PassMark для CPU и/или GPU."""
     try:
-        update_passmark_scores(headless=False)
+        update_passmark_scores(headless=False, update_cpu=update_cpu, update_gpu=update_gpu)
     except Exception as e:
         st.error(f"Ошибка PassMark: {e}")
         raise
 
 def run_full_update():
-    run_dns_parsing()
-    run_passmark_update()
+    """Полный цикл: DNS -> PassMark (если есть CPU/GPU) -> пересчёт баллов."""
+    processed = run_dns_parsing()
+    # Запускаем PassMark только если были обработаны CPU или GPU
+    update_cpu = "CPU" in processed
+    update_gpu = "GPU" in processed
+    if update_cpu or update_gpu:
+        run_passmark_update(update_cpu=update_cpu, update_gpu=update_gpu)
+    else:
+        st.info("CPU или GPU не были обработаны, PassMark пропущен.")
+    # Всегда пересчитываем баллы для MB, RAM, PSU
+    st.info("Пересчёт баллов для MB, RAM, PSU...")
+    recalculate_scores()
+    st.success("Полный цикл завершён!")
+
+def run_recalc_scores():
+    """Пересчёт баллов для MB, RAM, PSU."""
+    try:
+        recalculate_scores()
+        st.success("Баллы для MB, RAM, PSU пересчитаны!")
+    except Exception as e:
+        st.error(f"Ошибка пересчёта: {e}")
 
 # ------------------------------------------------------------------
 # Боковая панель
@@ -116,7 +141,11 @@ with st.sidebar:
         st.rerun()
     if st.button("🔥 Только PassMark", width='stretch'):
         with st.spinner("Обновление баллов PassMark..."):
-            run_passmark_update()
+            run_passmark_update(update_cpu=True, update_gpu=True)   # всегда обновляем
+        st.rerun()
+    if st.button("🧮 Расчёт баллов", width='stretch'):
+        with st.spinner("Пересчёт..."):
+            run_recalc_scores()
         st.rerun()
     st.markdown("---")
 
