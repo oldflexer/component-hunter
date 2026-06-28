@@ -5,7 +5,7 @@ from ..core.models import Product, PriceHistory, ModelScore, BenefitHistory
 from sqlalchemy import desc
 from ..core.logging import get_logger
 
-logger = get_logger("benefit", "logs/benefit.log", mode='a')
+logger = get_logger("benefit", "logs/benefit.log", mode='w')
 
 def get_current_score(product: Product, db: Session) -> Optional[float]:
     if product.model_id is None:

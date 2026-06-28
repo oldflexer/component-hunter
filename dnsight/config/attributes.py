@@ -33,3 +33,11 @@ ATTR_PSU_STANDARD = "Соответствие стандартам"
 ATTR_PSU_PROTECTIONS = "Технологии защиты"
 ATTR_PSU_CABLES = "Отстегивающиеся кабели"
 ATTR_PSU_SLEEVING = "Оплетка проводов"
+
+# Storage
+ATTR_STORAGE_CAPACITY = "Объем накопителя"
+ATTR_STORAGE_READ = "Максимальная скорость последовательного чтения"
+ATTR_STORAGE_WRITE = "Максимальная скорость последовательной записи"
+ATTR_STORAGE_TBW = "Максимальный ресурс записи (TBW)"
+ATTR_STORAGE_DWPD = "DWPD"
+ATTR_STORAGE_WARRANTY = "Гарантия продавца"

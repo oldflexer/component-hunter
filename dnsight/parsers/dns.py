@@ -17,7 +17,7 @@ from ..core.logging import get_logger
 COOLDOWN_SECONDS = 300  # 5 минут
 
 class DNSParser:
-    def __init__(self, log_file="logs/parser.log", log_level=logging.DEBUG, headless: bool = False):
+    def __init__(self, log_file="logs/parser.log", log_level=logging.INFO, headless: bool = False):
         self.logger = get_logger("parser", log_file, level=log_level, mode='w')
         self.base_url = "https://www.dns-shop.ru"
         self.driver = None

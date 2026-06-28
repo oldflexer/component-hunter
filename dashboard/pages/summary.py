@@ -8,7 +8,7 @@ from dashboard.utils import get_last_benefit, get_last_score
 from dnsight.config.settings import CACHE_TTL
 
 
-@st.cache_data(ttl=CACHE_TTL)
+# @st.cache_data(ttl=CACHE_TTL)
 def get_current_and_prev_avg(component_type: str, days_ago: int = 7):
     db = SessionLocal()
     try:
@@ -90,32 +90,6 @@ def get_current_and_prev_avg(component_type: str, days_ago: int = 7):
         db.close()
 
 
-@st.cache_data(ttl=CACHE_TTL)
-def get_top_benefit(component_type: str, top_n: int = 3):
-    db = SessionLocal()
-    try:
-        type_obj = db.query(ProductType).filter_by(name=component_type).first()
-        if not type_obj:
-            return []
-        products = db.query(Product).filter_by(type_id=type_obj.id).all()
-        items = []
-        for prod in products:
-            if prod.model_id is None:
-                continue
-            benefit = get_last_benefit(db, prod.id)
-            if benefit is None or benefit <= 0:
-                continue
-            items.append({
-                "name": prod.name,
-                "model": prod.model.name if prod.model else "—",
-                "benefit": benefit
-            })
-        items.sort(key=lambda x: x["benefit"], reverse=True)
-        return items[:top_n]
-    finally:
-        db.close()
-
-
 def render(db: Session):  # db используется только для получения типов, но можно не использовать
     st.markdown("<h2><i class='fas fa-chart-simple'></i> Общая сводка</h2>", unsafe_allow_html=True)
 
@@ -130,9 +104,7 @@ def render(db: Session):  # db используется только для по
     # Загружаем данные для всех типов параллельно
     with ThreadPoolExecutor() as executor:
         stats_futures = {ct: executor.submit(get_current_and_prev_avg, ct) for ct in component_types}
-        top_futures = {ct: executor.submit(get_top_benefit, ct) for ct in component_types}
         stats = {ct: stats_futures[ct].result() for ct in component_types}
-        tops = {ct: top_futures[ct].result() for ct in component_types}
 
     # Определяем эмодзи для каждого типа (можно динамически, но пока оставим)
     emojis = {
@@ -140,10 +112,10 @@ def render(db: Session):  # db используется только для по
     "GPU": '<i class="fas fa-vr-cardboard"></i>',
     "Motherboard": '<i class="fas fa-border-all"></i>',
     "RAM": '<i class="fas fa-memory"></i>',
+    "Storage": '<i class="fas fa-hdd"></i>',
+    "Cooler": '<i class="fas fa-fan"></i>',
     "PSU": '<i class="fas fa-plug"></i>',
     "Case": '<i class="fas fa-desktop"></i>',
-    "Cooler": '<i class="fas fa-fan"></i>',
-    "Storage": '<i class="fas fa-hdd"></i>'
     }
 
     cols = st.columns(len(component_types))

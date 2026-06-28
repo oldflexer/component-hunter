@@ -8,7 +8,11 @@ from ..core.logging import get_logger
 from ..calculators.benefit import update_benefit_for_product
 from dnsight.config.attributes import (
     ATTR_GPU_CHIP, ATTR_MB_PCIE, ATTR_MODEL, ATTR_MB_PHASES, ATTR_MB_FREQ,
-    ATTR_MB_MAX_RAM, ATTR_MB_CHANNELS, ATTR_PSU_CABLES, ATTR_PSU_CERT, ATTR_PSU_POWER, ATTR_PSU_PROTECTIONS, ATTR_PSU_SLEEVING, ATTR_PSU_STANDARD, ATTR_RAM_CAS, ATTR_RAM_ECC, ATTR_RAM_FREQ, ATTR_RAM_HEATSINK, ATTR_RAM_MODULE, ATTR_RAM_TOTAL
+    ATTR_MB_MAX_RAM, ATTR_MB_CHANNELS, ATTR_PSU_CABLES, ATTR_PSU_CERT, ATTR_PSU_POWER,
+    ATTR_PSU_PROTECTIONS, ATTR_PSU_SLEEVING, ATTR_PSU_STANDARD, ATTR_RAM_CAS,
+    ATTR_RAM_ECC, ATTR_RAM_FREQ, ATTR_RAM_HEATSINK, ATTR_RAM_MODULE, ATTR_RAM_TOTAL,
+    ATTR_STORAGE_CAPACITY, ATTR_STORAGE_READ, ATTR_STORAGE_WRITE,
+    ATTR_STORAGE_TBW, ATTR_STORAGE_DWPD, ATTR_STORAGE_WARRANTY
 )
 # from dnsight.config.settings import TDP_PHASE_RATIO  # если нужно
 
@@ -171,7 +175,7 @@ def calculate_ram_score(specs: Dict[str, str]) -> Optional[float]:
     ecc_coeff = get_ecc_coeff(specs.get(ATTR_RAM_ECC))
     heatsink_coeff = get_heatsink_coeff(specs.get(ATTR_RAM_HEATSINK))
 
-    score = (total * module * ecc_coeff * freq * (1.0 / cl) * heatsink_coeff) ** (1 / 2)
+    score = (total * module * ecc_coeff * freq * (1.0 / cl) * heatsink_coeff) ** (1 / 1.25)
     logger.info(f"Вычислен скор для RAM: {score:.2f} (total={total}, module={module}, ecc={ecc_coeff}, "
                 f"freq={freq}, cl={cl}, heatsink={heatsink_coeff})")
     return score
@@ -264,9 +268,135 @@ def calculate_psu_score(specs: Dict[str, str]) -> Optional[float]:
     cables_coeff = get_cables_coeff(specs.get(ATTR_PSU_CABLES))
     sleeving_coeff = get_sleeving_coeff(specs.get(ATTR_PSU_SLEEVING))
 
-    score = (power * cert_coeff * standard_coeff * protections_coeff * cables_coeff * sleeving_coeff) ** (1 / 2)
+    score = (power * cert_coeff * standard_coeff * protections_coeff * cables_coeff * sleeving_coeff) ** (1 / 1.25)
     logger.info(f"Вычислен скор для PSU: {score:.2f} (мощность={power}, сертификат={cert_coeff}, "
                 f"стандарт={standard_coeff}, защиты={protections_coeff}, кабели={cables_coeff}, оплетка={sleeving_coeff})")
+    return score
+
+def extract_number_and_unit(value: str):
+    """Извлекает число и единицу измерения из строки, например '960 ГБ' → (960, 'ГБ')."""
+    if not value:
+        return None, None
+    match = re.search(r'([\d.]+)\s*([A-Za-zА-Яа-я/]+)', value)
+    if match:
+        num = float(match.group(1))
+        unit = match.group(2).strip()
+        return num, unit
+    # если нет единицы, просто число
+    match = re.search(r'([\d.]+)', value)
+    if match:
+        return float(match.group(1)), None
+    return None, None
+
+def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
+    """
+    Вычисляет скор накопителя по характеристикам.
+    Формула: capacity_GB * read_MBps * write_MBps * tbw_TB * dwpd
+    Если TBW или DWPD отсутствуют, пытается вычислить их через "Гарантию продавца" и скорость записи.
+    """
+    def extract_number_and_unit(value: str):
+        if not value:
+            return None, None
+        match = re.search(r'([\d.]+)\s*([A-Za-zА-Яа-я/]+)', value)
+        if match:
+            num = float(match.group(1))
+            unit = match.group(2).strip()
+            return num, unit
+        match = re.search(r'([\d.]+)', value)
+        if match:
+            return float(match.group(1)), None
+        return None, None
+
+    def extract_months(value: str) -> Optional[int]:
+        """Извлекает количество месяцев из строки вида '36 мес.' или '3 года'."""
+        if not value:
+            return None
+        # Пробуем найти число и слово "мес", "месяц", "года", "год", "лет"
+        match = re.search(r'(\d+)\s*(мес|месяц|года|год|лет)', value, re.IGNORECASE)
+        if match:
+            num = int(match.group(1))
+            unit = match.group(2).lower()
+            if 'мес' in unit:
+                return num
+            elif 'год' in unit or 'лет' in unit:
+                return num * 12
+        # Если просто число, считаем месяцами
+        match = re.search(r'(\d+)', value)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def get_value(key, target_unit=None):
+        raw = specs.get(key)
+        if not raw:
+            return None
+        num, unit = extract_number_and_unit(raw)
+        if num is None:
+            return None
+        if target_unit == 'GB':
+            if unit and ('TB' in unit or 'ТБ' in unit):
+                return num * 1000
+            return num
+        elif target_unit == 'MBps':
+            if unit and ('GB' in unit or 'ГБ' in unit or 'G' in unit):
+                return num * 1000
+            return num
+        elif target_unit == 'TB':
+            if unit and ('GB' in unit or 'ГБ' in unit):
+                return num / 1000
+            return num
+        elif target_unit == 'dwpd':
+            return num
+        return num
+
+    capacity = get_value(ATTR_STORAGE_CAPACITY, 'GB')
+    read = get_value(ATTR_STORAGE_READ, 'MBps')
+    write = get_value(ATTR_STORAGE_WRITE, 'MBps')
+    tbw_raw = get_value(ATTR_STORAGE_TBW, 'TB')
+    dwpd_raw = get_value(ATTR_STORAGE_DWPD, 'dwpd')
+    warranty_raw = specs.get(ATTR_STORAGE_WARRANTY)
+
+    tbw = tbw_raw
+    dwpd = dwpd_raw
+
+    # Если TBW отсутствует, пробуем вычислить по гарантии и скорости записи
+    if tbw is None and warranty_raw and write is not None:
+        months = extract_months(warranty_raw)
+        if months is not None:
+            # Гарантия в секундах: месяцы * 2592000 (30 дней * 24 * 3600)
+            warranty_seconds = months * 2592000
+            # TBW = (warranty_seconds * write / 1048576) ** 0.5
+            tbw = (warranty_seconds * write / 1048576) ** 0.5
+            logger.info(f"TBW вычислен по гарантии: {tbw:.2f} (месяцы={months}, write={write})")
+
+    # Если DWPD отсутствует, пробуем вычислить по TBW, ёмкости и гарантии
+    if dwpd is None and tbw is not None and capacity is not None:
+        if warranty_raw:
+            months = extract_months(warranty_raw)
+            if months is not None:
+                warranty_days = months * 30   # дни
+                # DWPD = TBW / (ёмкость_в_ТБ * 365 * гарантия_в_годах)
+                # Но в запросе: DWPD = TBW / ("Объем накопителя" * 365 * "Гарантия продавца")
+                # "Гарантия продавца" приводим к дням, но в формуле уже 365, значит, вероятно, гарантия в годах?
+                # Используем более логичный вариант: DWPD = TBW / (ёмкость_в_ТБ * 365 * гарантия_в_годах)
+                # где гарантия_в_годах = months / 12
+                warranty_years = months / 12
+                capacity_tb = capacity / 1000  # переводим ГБ в ТБ
+                if capacity_tb > 0 and warranty_years > 0:
+                    dwpd = tbw / (capacity_tb * 365 * warranty_years)
+                    logger.info(f"DWPD вычислен: {dwpd:.4f} (TBW={tbw}, capacity={capacity}GB, warranty={months}мес)")
+                else:
+                    # Альтернативный вариант: DWPD = TBW / (ёмкость_в_ГБ * warranty_дней)
+                    # если не хотим использовать годы
+                    dwpd = tbw / (capacity * warranty_days)
+                    logger.info(f"DWPD вычислен (альт.): {dwpd:.4f} (TBW={tbw}, capacity={capacity}GB, days={warranty_days})")
+
+    if None in (capacity, read, write, tbw, dwpd):
+        logger.warning(f"Недостаточно данных для Storage: capacity={capacity}, read={read}, write={write}, tbw={tbw}, dwpd={dwpd}")
+        return None
+
+    score = (capacity * read * write * tbw * dwpd) ** (1 / 2)
+    logger.info(f"Вычислен скор для Storage: {score:.2f} (capacity={capacity} GB, read={read} MB/s, write={write} MB/s, tbw={tbw} TB, dwpd={dwpd})")
     return score
 
 def save_product_and_attributes(
@@ -380,6 +510,19 @@ def save_product_and_attributes(
             )
             db.add(new_score)
             logger.info(f"Добавлен скор {score} для модели PSU {model.name}")
+
+    # Для Storage вычисляем скор
+    if type_name == "Storage" and model:
+        score = calculate_storage_score(specs)
+        if score is not None:
+            new_score = ModelScore(
+                model_id=model.id,
+                score=score,
+                source="dns_storage_formula",
+                updated_at=datetime.utcnow()
+            )
+            db.add(new_score)
+            logger.info(f"Добавлен скор {score} для модели Storage {model.name}")
 
     db.commit()
     logger.info(f"Сохранён продукт {product_name} с {len(specs)} характеристиками")

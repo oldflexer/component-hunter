@@ -2,7 +2,7 @@ import logging
 import sys
 import os
 
-def get_logger(name: str, log_file: str = None, level=logging.INFO, mode='a'):
+def get_logger(name: str, log_file: str = None, level=logging.INFO, mode='w'):
     logger = logging.getLogger(name)
     logger.setLevel(level)
     
