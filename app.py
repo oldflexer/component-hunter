@@ -31,11 +31,9 @@ st.markdown("""
     [data-testid="stSidebarHeader"] {
         display: none !important;
     }
-            
     [data-testid="stSidebarUserContent"] {
         padding-top: 10px !important;
     }
-            
     [class*="en7m6i63"] {
         display: none !important;
     }
@@ -48,6 +46,10 @@ st.markdown("""
 
 init_db()
 db = get_db()
+
+# Инициализация состояния блокировки
+if "busy" not in st.session_state:
+    st.session_state.busy = False
 
 # ------------------------------------------------------------------
 # Функции с поддержкой прогресс-бара
@@ -142,9 +144,6 @@ def run_passmark_update(update_cpu=True, update_gpu=True, progress_bar=None, tex
     if text_callback:
         text_callback("Обновление PassMark...")
     try:
-        # Передаём callback для обновления текста (без прогресс-бара, т.к. внутри update_passmark_scores нет прогресса)
-        # Можно передать progress_bar, но он не используется внутри update_passmark_scores, если не доработать.
-        # Пока просто вызываем как есть.
         update_passmark_scores(headless=False, update_cpu=update_cpu, update_gpu=update_gpu)
         if text_callback:
             text_callback("✅ PassMark обновлён")
@@ -173,6 +172,8 @@ def run_full_update():
     status_text.text("Начинаем полный цикл...")
 
     try:
+        st.session_state.busy = True
+
         # Этап 1: DNS
         status_text.text("Запуск DNS...")
         processed = run_dns_parsing(progress_bar=progress_bar, text_callback=status_text.text)
@@ -182,9 +183,6 @@ def run_full_update():
         update_gpu = "GPU" in processed
         if update_cpu or update_gpu:
             status_text.text("Запуск PassMark...")
-            # Обнуляем прогресс? Лучше оставить общий прогресс, но мы не можем его сбросить.
-            # Можно использовать отдельный прогресс для PassMark, но это нарушит единую шкалу.
-            # Поэтому просто вызываем без изменения прогресс-бара.
             run_passmark_update(update_cpu=update_cpu, update_gpu=update_gpu, text_callback=status_text.text)
         else:
             status_text.text("PassMark пропущен (нет CPU/GPU)")
@@ -200,6 +198,7 @@ def run_full_update():
         status_text.text(f"❌ Ошибка: {e}")
         st.error(f"❌ Ошибка: {e}")
     finally:
+        st.session_state.busy = False
         st.rerun()
 
 # ------------------------------------------------------------------
@@ -215,14 +214,15 @@ with st.sidebar:
 
     st.header("Управление")
 
-    if st.button("🔄 Полный цикл", width='stretch'):
+    if st.button("🔄 Полный цикл", width='stretch', disabled=st.session_state.busy):
         run_full_update()
 
-    if st.button("🔸 Только DNS", width='stretch'):
+    if st.button("🔸 Только DNS", width='stretch', disabled=st.session_state.busy):
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.text("Начинаем парсинг DNS...")
         try:
+            st.session_state.busy = True
             run_dns_parsing(progress_bar=progress_bar, text_callback=status_text.text)
             progress_bar.progress(1.0)
             status_text.text("✅ DNS завершён")
@@ -230,14 +230,16 @@ with st.sidebar:
         except Exception as e:
             status_text.text(f"❌ Ошибка: {e}")
             st.error(f"❌ Ошибка: {e}")
-        st.rerun()
+        finally:
+            st.session_state.busy = False
+            st.rerun()
 
-    if st.button("🔥 Только PassMark", width='stretch'):
+    if st.button("🔥 Только PassMark", width='stretch', disabled=st.session_state.busy):
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.text("Начинаем обновление PassMark...")
         try:
-            # PassMark не имеет внутреннего прогресса, поэтому просто показываем индикатор
+            st.session_state.busy = True
             run_passmark_update(update_cpu=True, update_gpu=True, text_callback=status_text.text)
             progress_bar.progress(1.0)
             status_text.text("✅ PassMark обновлён")
@@ -245,13 +247,16 @@ with st.sidebar:
         except Exception as e:
             status_text.text(f"❌ Ошибка: {e}")
             st.error(f"❌ Ошибка: {e}")
-        st.rerun()
+        finally:
+            st.session_state.busy = False
+            st.rerun()
 
-    if st.button("🧮 Расчёт баллов", width='stretch'):
+    if st.button("🧮 Расчёт баллов", width='stretch', disabled=st.session_state.busy):
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.text("Начинаем пересчёт...")
         try:
+            st.session_state.busy = True
             recalculate_scores(progress_bar=progress_bar, text_callback=status_text.text)
             progress_bar.progress(1.0)
             status_text.text("✅ Пересчёт завершён!")
@@ -259,20 +264,35 @@ with st.sidebar:
         except Exception as e:
             status_text.text(f"❌ Ошибка: {e}")
             st.error(f"❌ Ошибка: {e}")
-        st.rerun()
+        finally:
+            st.session_state.busy = False
+            st.rerun()
 
     st.markdown("---")
 
-    selected_page = st.radio(
+    # Инициализация состояния выбранной страницы
+    if "selected_page" not in st.session_state:
+        st.session_state.selected_page = "Сводка"
+
+    # Список страниц
+    pages = ["Сводка", "Таблицы", "Диагностика", "Формы", "Графики",
+             "Аналитика", "Запросы", "Подбор компонентов", "Тепловые карты", "ПК-подбор"]
+
+    # Radio с синхронизацией с session_state
+    selected = st.radio(
         "Выберите раздел",
-        ["Сводка", "Таблицы", "Диагностика", "Формы", "Графики",
-         "Аналитика", "Запросы", "Подбор компонентов", "Тепловые карты", "ПК-подбор"],
-        index=0
+        pages,
+        index=pages.index(st.session_state.selected_page),
+        key="selected_page_radio"
     )
+    # Обновляем session_state при изменении
+    st.session_state.selected_page = selected
 
 # ------------------------------------------------------------------
 # Рендеринг выбранной страницы
 # ------------------------------------------------------------------
+selected_page = st.session_state.selected_page
+
 if selected_page == "Сводка":
     summary.render(db)
 elif selected_page == "Таблицы":

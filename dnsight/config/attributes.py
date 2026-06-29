@@ -41,3 +41,5 @@ ATTR_STORAGE_WRITE = "Максимальная скорость последов
 ATTR_STORAGE_TBW = "Максимальный ресурс записи (TBW)"
 ATTR_STORAGE_DWPD = "DWPD"
 ATTR_STORAGE_WARRANTY = "Гарантия продавца"
+ATTR_STORAGE_WARRANTY_ALT = "Гарантия продавца / производителя"
+ATTR_STORAGE_WARRANTY_ALT2 = "Гарантия"

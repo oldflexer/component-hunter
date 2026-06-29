@@ -12,7 +12,8 @@ from dnsight.config.attributes import (
     ATTR_PSU_PROTECTIONS, ATTR_PSU_SLEEVING, ATTR_PSU_STANDARD, ATTR_RAM_CAS,
     ATTR_RAM_ECC, ATTR_RAM_FREQ, ATTR_RAM_HEATSINK, ATTR_RAM_MODULE, ATTR_RAM_TOTAL,
     ATTR_STORAGE_CAPACITY, ATTR_STORAGE_READ, ATTR_STORAGE_WRITE,
-    ATTR_STORAGE_TBW, ATTR_STORAGE_DWPD, ATTR_STORAGE_WARRANTY
+    ATTR_STORAGE_TBW, ATTR_STORAGE_DWPD, ATTR_STORAGE_WARRANTY,
+    ATTR_STORAGE_WARRANTY_ALT, ATTR_STORAGE_WARRANTY_ALT2
 )
 # from dnsight.config.settings import TDP_PHASE_RATIO  # если нужно
 
@@ -308,11 +309,11 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
         return None, None
 
     def extract_months(value: str) -> Optional[int]:
-        """Извлекает количество месяцев из строки вида '36 мес.' или '3 года'."""
+        """Извлекает количество месяцев из строки вида '24 мес.', '36 мес.', '2 года'."""
         if not value:
             return None
-        # Пробуем найти число и слово "мес", "месяц", "года", "год", "лет"
-        match = re.search(r'(\d+)\s*(мес|месяц|года|год|лет)', value, re.IGNORECASE)
+        value = value.strip().strip('.')
+        match = re.search(r'(\d+)\s*(мес|месяц|месяца|месяцев|года|год|лет)', value, re.IGNORECASE)
         if match:
             num = int(match.group(1))
             unit = match.group(2).lower()
@@ -320,7 +321,7 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
                 return num
             elif 'год' in unit or 'лет' in unit:
                 return num * 12
-        # Если просто число, считаем месяцами
+        # Если не удалось, пробуем просто число (считаем месяцами)
         match = re.search(r'(\d+)', value)
         if match:
             return int(match.group(1))
@@ -354,7 +355,13 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
     write = get_value(ATTR_STORAGE_WRITE, 'MBps')
     tbw_raw = get_value(ATTR_STORAGE_TBW, 'TB')
     dwpd_raw = get_value(ATTR_STORAGE_DWPD, 'dwpd')
-    warranty_raw = specs.get(ATTR_STORAGE_WARRANTY)
+
+    # Поиск гарантии по нескольким возможным ключам
+    warranty_raw = None
+    for key in [ATTR_STORAGE_WARRANTY, ATTR_STORAGE_WARRANTY_ALT, ATTR_STORAGE_WARRANTY_ALT2]:
+        if key in specs:
+            warranty_raw = specs[key]
+            break
 
     tbw = tbw_raw
     dwpd = dwpd_raw
@@ -363,9 +370,8 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
     if tbw is None and warranty_raw and write is not None:
         months = extract_months(warranty_raw)
         if months is not None:
-            # Гарантия в секундах: месяцы * 2592000 (30 дней * 24 * 3600)
+            # гарантия в секундах: месяцы * 2592000 (30 дней * 24 * 3600)
             warranty_seconds = months * 2592000
-            # TBW = (warranty_seconds * write / 1048576) ** 0.5
             tbw = (warranty_seconds * write / 1048576) ** 0.5
             logger.info(f"TBW вычислен по гарантии: {tbw:.2f} (месяцы={months}, write={write})")
 
@@ -374,20 +380,14 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
         if warranty_raw:
             months = extract_months(warranty_raw)
             if months is not None:
-                warranty_days = months * 30   # дни
-                # DWPD = TBW / (ёмкость_в_ТБ * 365 * гарантия_в_годах)
-                # Но в запросе: DWPD = TBW / ("Объем накопителя" * 365 * "Гарантия продавца")
-                # "Гарантия продавца" приводим к дням, но в формуле уже 365, значит, вероятно, гарантия в годах?
-                # Используем более логичный вариант: DWPD = TBW / (ёмкость_в_ТБ * 365 * гарантия_в_годах)
-                # где гарантия_в_годах = months / 12
                 warranty_years = months / 12
-                capacity_tb = capacity / 1000  # переводим ГБ в ТБ
+                capacity_tb = capacity / 1000
                 if capacity_tb > 0 and warranty_years > 0:
                     dwpd = tbw / (capacity_tb * 365 * warranty_years)
                     logger.info(f"DWPD вычислен: {dwpd:.4f} (TBW={tbw}, capacity={capacity}GB, warranty={months}мес)")
                 else:
-                    # Альтернативный вариант: DWPD = TBW / (ёмкость_в_ГБ * warranty_дней)
-                    # если не хотим использовать годы
+                    # Альтернативный вариант: используем дни
+                    warranty_days = months * 30
                     dwpd = tbw / (capacity * warranty_days)
                     logger.info(f"DWPD вычислен (альт.): {dwpd:.4f} (TBW={tbw}, capacity={capacity}GB, days={warranty_days})")
 
@@ -395,7 +395,7 @@ def calculate_storage_score(specs: Dict[str, str]) -> Optional[float]:
         logger.warning(f"Недостаточно данных для Storage: capacity={capacity}, read={read}, write={write}, tbw={tbw}, dwpd={dwpd}")
         return None
 
-    score = (capacity * read * write * tbw * dwpd) ** (1 / 2)
+    score = capacity * read * write * tbw * dwpd
     logger.info(f"Вычислен скор для Storage: {score:.2f} (capacity={capacity} GB, read={read} MB/s, write={write} MB/s, tbw={tbw} TB, dwpd={dwpd})")
     return score
 
